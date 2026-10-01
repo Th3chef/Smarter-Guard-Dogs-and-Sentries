@@ -49,9 +49,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # the release notes up to the updating / download / install lines
+          # the release notes up to the updating / download / install lines, one point per line
+          # (Nexus shows each changelog line as its own bullet, so the "- " bullets and blank lines go)
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body -q .body \
-            | tr -d '\r' | awk '/^(\*\*)?(Install|Updating|Download)/ {exit} {print}' | sed -e 's/\*\*//g' > notes.txt
+            | tr -d '\r' | awk '/^(\*\*)?(Install|Updating|Download)/ {exit} {print}' \
+            | sed -e 's/\*\*//g' -e 's/^[[:space:]]*[-*][[:space:]]\+//' | grep -v '^[[:space:]]*$' > notes.txt || true
           {
             echo 'text<<NOTES_END'
             cat notes.txt
