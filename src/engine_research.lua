@@ -59,12 +59,6 @@ function check_marker(st)
   local ok, down = pcall(KB.pressed, research.key)
   if not (ok and down) then return end
   research.marks = research.marks + 1
-  -- (4.0.1 test builds) the laser colour chart around you for 20 s
-  pcall(function()
-    local me = st and st.player_pos
-    if not me then local okp, p = pcall(find_player); me = okp and p and unit_position(p.player_unit) or nil end
-    if me then laser.calib = { at = { me[1], me[2], me[3] }, until_t = os.clock() + 20 }; event('laser (test): colour chart shown for 20 s') end
-  end)
   rwrite(string.format('MARK %d at %.2f', research.marks, os.clock() - research.t0))
   local cur, near = nil, {}
   local me = st and st.player_pos

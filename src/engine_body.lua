@@ -36,7 +36,8 @@ do
     local dir = base .. '\\CowboyBingus\\Helldivers2\\Logs'
     local f = io.open(dir .. '\\SmarterGuardDogsAndSentries.log', 'a')
     if f then f:close(); LOGDIR = dir else LOGDIR = base end
-    pcall(function()
+    -- (not in the Smarter SEAF build: its files have their own names and there is nothing of its own to move)
+    if not SGD.seaf_only then pcall(function()
       local old, new = base .. '\\SmarterGuardDogs', base .. '\\SmarterGuardDogsAndSentries'
       local g = io.open(old .. '.cache', 'r')
       if g then g:close(); os.rename(old .. '.cache', new .. '.cache'); os.remove(old .. '.cache') end
@@ -46,7 +47,7 @@ do
         if c then c:close(); os.rename(new .. '.cache', LOGDIR .. '\\SmarterGuardDogsAndSentries.cache'); os.remove(new .. '.cache') end
         os.remove(new .. '.log'); os.remove(new .. '-research.log')
       end
-    end)
+    end) end
   end
 end
 local startup_notes = {}
@@ -94,6 +95,7 @@ local function write_log()
   table.sort(keys, function(x, y) return session.state_time[x] > session.state_time[y] end)
   f:write('time in each state:' .. (#keys == 0 and ' none' or '') .. '\n')
   for _, k in ipairs(keys) do f:write(string.format('  %-34s %s\n', k, mmss(session.state_time[k]))) end
+  if not SGD.seaf_only then   -- (the Smarter SEAF build handles no dogs or sentries)
   f:write('dogs:' .. (next(session.dog_time) and '' or ' none out yet') .. '\n')
   for name, d in pairs(session.dog_time) do
     f:write(string.format('  %-10s out %s, with a target %.0f%% of that, firing %.0f%% of the time it had one\n', name,
@@ -124,6 +126,7 @@ local function write_log()
   if session.other_sentries > 0 then
     f:write(string.format('  other players\' sentries seen (run by their own game, not changed from yours): up to %d\n', session.other_sentries))
   end
+  end
   write_counts(f, READ_ONLY and 'actions it would have taken' or 'actions taken', session.actions)
   if #session.errors > 0 then
     f:write('errors (first 10):\n')
@@ -133,11 +136,15 @@ local function write_log()
     local T = session.timing
     f:write(string.format('mod cost per frame (test): average %.3f ms, highest %.2f ms, over 1 ms in %d of %d frames\n', T.sum / T.n, T.max, T.over, T.n))
   end
-  if TESTER then write_counts(f, 'enemy types the dog picked (type id: times; for bug reports)', session.types) end
+  if TESTER and not SGD.seaf_only then write_counts(f, 'enemy types the dog picked (type id: times; for bug reports)', session.types) end
   if TESTER and next(session.steps) then write_counts(f, 'what the dog was doing while out (polls; AI step 6 = lining up, 7 = firing)', session.steps) end
   if TESTER and next(session.sentry_nodes) then write_counts(f, 'what the sentries were doing (polls; by AI step)', session.sentry_nodes) end
   if TESTER and next(session.sentry_types) then write_counts(f, 'enemy types the sentries went for (type id: times)', session.sentry_types) end
   if TESTER and next(session.noshots) then write_counts(f, 'no_shot by enemy type and distance from the dog', session.noshots) end
+  if TESTER and session.seaf_text then
+    local ok, lines = pcall(session.seaf_text)
+    if ok then for _, l in ipairs(lines) do f:write(l .. '\n') end end
+  end
   if TESTER and #session.markers > 0 then
     f:write('F8 markers:\n')
     for _, e in ipairs(session.markers) do f:write('  ' .. e .. '\n') end
@@ -295,12 +302,12 @@ for h, n in pairs({
 }) do LABELS[type_hash(h)] = n end
 local DOGS = {
   { name = 'Rover', pack = type_hash('af9b683ccb6ddc02'), drone = type_hash('5beec97f4c7f4ae9'), laser = true,
-    fast = true, radius = 0.35, safety_keep = 0.4, linger = 0.3, range = 35, barrel = false },   -- its own beam already shows where it hits; our laser points at the enemy
+    fast = true, radius = 0.35, safety_keep = 0.4, linger = 0.3, range = 35 },   -- (4.5.3: its laser comes out of its barrel too, a tester's call)
     -- (its beam is thin, so its safety margin, look-ahead after a fast turn and hide time are a little shorter;
     -- beyond ~35 m it often lines up without firing, so farther enemies wait while something closer is available:
     -- it is a guard dog, the enemies near you come first)
   { name = 'K-9', pack = type_hash('c28da712b12e3dfa'), drone = type_hash('4b071633584e4594'), laser = true,
-    fast = false, radius = 0.6, chain = 3.0, barrel = false, aim_rise = 1.0 },   -- its arc weapon sways too much to follow
+    fast = false, radius = 0.6, chain = 3.0, aim_rise = 1.0 },   -- (4.5.3: out of its barrel too; its arc weapon sways, and so does the laser)
   { name = 'Guard Dog', pack = type_hash('255ebc5767d7ceec'), drone = type_hash('a0ff2f9a0ca6992a'), laser = false,
     fast = false, radius = 0.35, safety_keep = 0.4, linger = 0.3, range = 32, hard_range = true, aim_rise = 1.2 },   -- it only ever opens fire within ~32 m (measured from test logs)
     -- (safety trimmed like the Rover's: slightly smaller margin, shorter look-ahead after a fast turn and hide time;
@@ -330,7 +337,8 @@ for _, d in ipairs(DOGS) do DOG_BY_PACK[d.pack] = d end
 --    the other sentries leave them until they land
 --  bursts: short bursts at Heavy Devastators, like the Guard Dog (machine gun, Gatling)
 --  air_first: gunships and Stingrays before everything else (Gatling, autocannon, rocket, Laser); air_still: only while the gunship hovers (rocket)
---  laser_follows_barrel / laser_at_enemy: how our laser is drawn (along its barrel all the way / straight at the enemy)
+--  laser_at_enemy: no barrel axis to follow (rocket, autocannon): the laser runs from the muzzle to where the game aims
+--  the gun. Every other sentry's laser comes out along its barrel (4.5.3; laser_follows_barrel is no longer needed)
 -- The log says when a sentry-like AI shows up with a type that isn't in this list.
 local SENTRIES = {
   { name = 'Machine Gun Sentry', type = type_hash('37cde43876ba26bb'), ai = 312, line = 0.45, spread = 0.01, sweep = true, barrel_axis = 2, pen = 3, bursts = true, prefer = 'light' },

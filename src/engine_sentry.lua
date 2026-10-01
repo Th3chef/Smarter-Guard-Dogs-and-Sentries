@@ -105,6 +105,7 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
   local type_ai = {}                -- entity type -> AI id, looked up once per kind (to report unknown sentries)
   local barrel = {}                 -- per sentry kind: { axis, sign } once learned, or sums while learning
   local next_scan, pl, pl_until, last_count, last_scan = 0, nil, 0, nil, nil
+  local seaf_research, seaf_err     -- (test builds) the SEAF research below
   -- what we know about a sentry is kept by its entity id for a while after we lose track of it: the game moves a
   -- sentry's records around now and then, and a Laser Sentry must not come back with its heat reset to zero
   -- (that let one burn out: it kept "restarting" cold)
@@ -112,6 +113,9 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
   local refound_notes = 0
   local not_steered = {}             -- id -> the reason last logged for a sentry that couldn't be steered
   local other_teslas = {}            -- another player's Tesla Towers already noted (4.5)
+  -- (4.5.3: declared here, defined further down - forget() calls it; before, it called an undefined global and a Tesla
+  -- Tower the mod let go of kept its rewritten target list: switching it off mid-mission left it picking nothing new)
+  local tesla_unfilter
   local function forget(id, s, why)
     s.spare_ids = nil
     pcall(hider_restore, s.H)
@@ -345,7 +349,7 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
   -- (the list is kept as it was found until it has been written back: if the tower's records can't be confirmed now -
   -- moved, say - the original goes with what is remembered about the tower, for when it is found again). The marks
   -- are taken off the enemies' entries still holding them (after the hidden ones have been shown again)
-  local function tesla_unfilter(s)
+  tesla_unfilter = function(s)
     local P = s.P
     local o = P and P.filter_orig
     if not o then return end
@@ -373,12 +377,14 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
     last_count = ta
     local ptrs = ta > 0 and rd(rptr(targeting + 360, 'targeting entities'), 8 * ta, 'targeting entities') or ''
     local seen, others = {}, 0
+    if seaf_research then seaf_research.begin() end
     for i = 0, ta - 1 do
       local p = ptr_of(ptrs, i * 8)
       local e = p and read(p, 24)
       if e then
         local ty = e:sub(1, 8)
-        local def = SENTRY_BY_TYPE[ty]
+        if seaf_research then pcall(seaf_research.see, e, p, i, behaviours, perception) end
+        local def = not SGD.seaf_only and SENTRY_BY_TYPE[ty]   -- (the Smarter SEAF build takes on no sentries)
         -- (the Tesla Tower is left to the game when the Sentries option is set to leave it out: it is simply not taken
         -- on, like another player's sentry)
         local skip = def and def.spares_helldivers and not OPT.tesla()
@@ -429,7 +435,7 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
               if not other_teslas[id] then other_teslas[id] = true; event('sentry: another player\'s Tesla Tower is out (run by their game: not steered by this mod)') end
             end
           end
-        elseif not def and is_local(e) and type_ai[ty] == nil then
+        elseif not def and not SGD.seaf_only and is_local(e) and type_ai[ty] == nil then
           -- the first time a kind of agent shows up on your side: note it if it runs a sentry's AI but isn't known
           -- (that is how the Armed Resupply Pod's and the Supply FRV's guns were found, 4.0.6 Test 8)
           type_ai[ty] = false
@@ -446,6 +452,7 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
     for id, s in pairs(sentries) do
       if not seen[id] then forget(id, s, 'not in the list') end
     end
+    if seaf_research then seaf_research.finish() end
     for id, r in pairs(remembered) do if t - r.t > 120 then remembered[id] = nil end end
     for id, a in pairs(air_seen) do if FRAME - a[7] > 600 then air_seen[id] = nil end end
     if others > session.other_sentries then session.other_sentries = others end
@@ -939,6 +946,58 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
   end
   -- (also, 'ask trace (test)': the same after the mod asks it to drop a target - safety, cover, armor, cooling... -
   -- with nothing else it may pick, first 10 per sentry kind: does it keep firing at nothing for a second?)
+  -- (4.5.3 Test 3) 'record trace': after the game clears a sentry's target while it is in its firing step (it keeps
+  -- firing at nothing for about a second, a tester's logs), its AI record (512 bytes), weapon record (1008) and
+  -- targeting state (208) are read at 0 to 1.25 s and every 4-byte field that changes is written to
+  -- SmarterGuardDogsAndSentries-records.log, times as seconds from now: to find what holds it in its firing step.
+  -- The first 4 per session; reads only
+  local RTRACE = { 0, 0.1, 0.2, 0.35, 0.5, 0.65, 0.8, 0.95, 1.1, 1.25 }
+  local rtrace_n = 0
+  local function rtrace_snap(s, R)
+    local now = u64(rd(rptr(A.g.clock, 'clock') + 24, 8, 'clock'), 0)
+    R.snaps[#R.snaps + 1] = { now = now, rec = read(s.rec_addr, 512), wr = s.wr_addr and read(s.wr_addr, 1008), ts = read(s.tstate, 208),
+      node = (read(s.rec_addr + 8, 4) or '\0\0\0\0') }
+  end
+  local function rtrace_write(s, R)
+    if not LOGDIR then return end
+    local f = io.open(LOGDIR .. '\\SmarterGuardDogsAndSentries-records.log', rtrace_n == 1 and 'w' or 'a')
+    if not f then return end
+    f:write(string.format('== %s, target %d cleared in its firing step (%s); snapshots at %s s\n', s.def.name, R.id, R.why,
+      table.concat(RTRACE, ' ', 1, #R.snaps)))
+    local S = R.snaps
+    f:write('  AI step: ')
+    for _, x in ipairs(S) do f:write(u32(x.node, 0), ' ') end
+    f:write('\n')
+    for _, reg in ipairs({ { 'rec', 512 }, { 'wr', 1008 }, { 'ts', 208 } }) do
+      local name, len = reg[1], reg[2]
+      local lines, skip = 0, {}
+      for off = 0, len - 4, 4 do
+        local first, diff = S[1][name] and S[1][name]:sub(off + 1, off + 4), false
+        if skip[off] then diff = nil end
+        if diff ~= nil then for _, x in ipairs(S) do if not x[name] or x[name]:sub(off + 1, off + 4) ~= first then diff = true; break end end end
+        if diff and lines < 40 then
+          lines = lines + 1
+          local vals = {}
+          for _, x in ipairs(S) do
+            local b = x[name]
+            if not b then vals[#vals + 1] = '-'
+            else
+              local v = u32(b, off)
+              -- a u64 time (this field and the next one) shown as seconds from that snapshot's clock
+              local tv = off % 8 == 0 and off + 8 <= len and x.now > 1e9 and u64(b, off)
+              if tv and tv > x.now - 30e6 and tv < x.now + 30e6 then vals[#vals + 1] = string.format('T%+.2f', (tv - x.now) / 1e6); skip[off + 4] = true
+              else
+                local fv = f32(b, off)
+                vals[#vals + 1] = (v > 0x10000 and fv == fv and math.abs(fv) > 1e-3 and math.abs(fv) < 1e6) and string.format('%.3g', fv) or tostring(v)
+              end
+            end
+          end
+          f:write(string.format('  %s +%-4d %s\n', name, off, table.concat(vals, ' ')))
+        end
+      end
+    end
+    f:close()
+  end
   local function kill_trace_start(s, st, t, why, label)
     label = label or 'kill trace'
     local k = s.def.name .. '/' .. label
@@ -947,8 +1006,17 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
     local id = st.target ~= 0 and st.target or (s.P.lost_from or 0)
     local c = st.current
     s.P.ktrace = { id = id, t0 = t, why = why, label = label, kind = (st.target ~= 0 and c and c.kind) or s.P.prev_kind, parts = {}, last = nil }
+    if why == 'target cleared by the game' and st.node == (s.def.fire_node or FIRE_NODE) and rtrace_n < 4 and not s.P.rtrace then
+      rtrace_n = rtrace_n + 1
+      s.P.rtrace = { t0 = t, id = id, why = why, snaps = {} }
+    end
   end
   local function kill_trace_step(s, st, t)
+    local R = s.P.rtrace
+    if R then
+      if #R.snaps < #RTRACE and t - R.t0 >= RTRACE[#R.snaps + 1] then pcall(rtrace_snap, s, R) end
+      if #R.snaps >= #RTRACE or t - R.t0 > RTRACE[#RTRACE] + 0.5 then s.P.rtrace = nil; pcall(rtrace_write, s, R) end
+    end
     local K = s.P.ktrace
     if not K then return end
     local ok, now = pcall(ktrace_state, st, K.id)
@@ -1267,6 +1335,14 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
         bump(session.actions, 'sentry_target_lost')
         return { block = hide, kick = true, reason = 'sentry_target_lost', quiet = true }
       end
+      -- (4.5.3) nothing to pick: its targeting state still holds the old target (and a second id), and while it does
+      -- the gun stays in its firing step, shooting at where the enemy was - about 1 s after the game cleared the target
+      -- in its AI record, whatever its timer (a tester's record traces: the FRV gun's AI cleared its own copies at its
+      -- next think and stayed in step 12; it left the step the moment the targeting state went to target 0, second id
+      -- 32767). The mod lets go of it the same way at once (release_target); up to two tries
+      P.lost_t, P.lost_tries = t, (P.lost_tries or 0) + 1
+      bump(session.actions, 'sentry_target_released')
+      return { block = hide, kick = false, release = P.lost_from, reason = 'sentry_target_lost', quiet = true }
     end
     if P.hold and target == P.hold.target and t < P.hold.until_t then
       return { block = union(P.hold.block, hide), kick = false, reason = P.hold.reason }
@@ -1356,6 +1432,15 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
         if not write(s.rec_addr + 152, u64bytes(now)) then stats.write_failures = stats.write_failures + 1 end
       end
     end
+    if req.release then
+      -- (4.5.3) its targeting state lets go of the old target as the game's own does after a second: target 0, the
+      -- second id 32767. Only while it still holds that same target and its AI record has none
+      local ts = read(s.tstate, 8)
+      local rec = read(s.rec_addr, 28)
+      if ts and rec and u32(ts, 0) == req.release and u32(rec, 24) == 0 then
+        if not write(s.tstate, pack32(0) .. pack32(32767)) then stats.write_failures = stats.write_failures + 1 end
+      end
+    end
   end
 
   -- ------------------------------------------------------------------ each frame
@@ -1375,9 +1460,11 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
     st.close_enemy = best
     return best
   end
+  -- @@SEAF_RESEARCH@@ (the Smarter SEAF build puts engine_seaf.lua here; in this mod seaf_research stays nil)
+
   sentry_tick = function(st_dog, t, dt)
     -- (the Sentries option off: your sentries are left to the game)
-    if not OPT.sentries() then
+    if not SGD.seaf_only and not OPT.sentries() then
       if next(sentries) then sentry_restore() end
       return false
     end
@@ -1386,6 +1473,7 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
       pl = nil
       noted_events = 0   -- (up to 40 sentry events are logged per mission)
       other_teslas = {}
+      if seaf_research then seaf_research.reset() end
       return false
     end
     -- (a new sentry changes the number of agents: rescan then, at most twice a second; otherwise every 2 s)
@@ -1398,6 +1486,10 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
     if t >= next_scan or (count and count > (last_count or -1) and t >= (last_scan or 0) + 0.5) then
       next_scan, last_scan = t + SCAN_SECONDS, t
       scan(t)
+    end
+    if seaf_research then
+      local ok, err = pcall(seaf_research.tick, t)
+      if not ok and not seaf_err then seaf_err = true; event('SEAF research: error ' .. tostring(type(err) == 'table' and err[2] or err)) end
     end
     if not next(sentries) then return false end
     local me, mates
@@ -1582,40 +1674,34 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
           and (not s.def.laser_when_firing or t - (s.P.fired_t or -99) < LASER_FIRING_HOLD) then
           local c = st.current
           local to = (not s.def.blast and st.aim) or { c.pos[1], c.pos[2], c.pos[3] + AIM_UP[1] }
-          -- sentries whose shots fly slowly or drop (rockets, cannon shells, mortars) aim well ahead of or above the
-          -- enemy: their laser points at the enemy itself, not along the barrel
-          if s.def.laser_at_enemy then to = { c.pos[1], c.pos[2], c.pos[3] + AIM_UP[2] } end
-          if st.fwd and s.def.laser_follows_barrel then
-            -- (Laser Sentry: its own beam comes out along the barrel, so ours does too, all the way, turning with it;
-            -- lightly smoothed so the barrel's wobble doesn't shake it)
+          -- (4.5.3, a tester's call: every laser comes out of the gun's barrel.) The Rocket and Autocannon sentries,
+          -- whose barrel can't be read from their parts, point it from their muzzle to where the game aims them (ahead
+          -- of a moving enemy, as their barrels do); the enemy itself only if that isn't known
+          if s.def.laser_at_enemy and not st.aim then to = { c.pos[1], c.pos[2], c.pos[3] + AIM_UP[2] } end
+          local on = true   -- (4.5.3: the cross at the end only when the end is on the enemy, as the dogs')
+          if st.fwd and not s.def.laser_at_enemy then
+            -- (every sentry whose barrel is known: the laser comes out along the barrel, all the way, turning with it,
+            -- as the Laser Sentry's always did; lightly smoothed so the barrel's wobble doesn't shake it. 4.5.3: before,
+            -- the other guns' lasers slid over to the aim point when the barrel was off it)
             local f = st.fwd
             local p = s.beam_fwd
             if p then f = norm({ p[1] * 0.5 + f[1] * 0.5, p[2] * 0.5 + f[2] * 0.5, p[3] * 0.5 + f[3] * 0.5 }) or st.fwd end
             s.beam_fwd = f
             local len = math.sqrt((to[1] - M[1]) ^ 2 + (to[2] - M[2]) ^ 2 + (to[3] - M[3]) ^ 2)
-            to = { M[1] + f[1] * len, M[2] + f[2] * len, M[3] + f[3] * len }
-          elseif st.fwd and not s.def.laser_at_enemy then
-            -- follow the barrel, so the beam shows where it really points (never ending well away from the enemy).
-            -- (5.0: blended rather than switched: while the barrel is near the aim point the beam follows it, further
-            -- off it slides over to the aim point, and beyond the limit it points at the aim point. Switching made the
-            -- beam jump back and forth on the Gatling and the pod/FRV guns, whose barrels shake while they fire)
-            local len = math.sqrt((to[1] - M[1]) ^ 2 + (to[2] - M[2]) ^ 2 + (to[3] - M[3]) ^ 2)
-            local e = { M[1] + st.fwd[1] * len, M[2] + st.fwd[2] * len, M[3] + st.fwd[3] * len }
-            local off = math.sqrt((e[1] - to[1]) ^ 2 + (e[2] - to[2]) ^ 2 + (e[3] - to[3]) ^ 2)
-            local lim = math.max(1.5, 0.06 * len)
-            local w = math.max(0, math.min(1, (lim - off) / (0.4 * lim)))   -- 1 = along the barrel, 0 = at the aim point
-            to = { to[1] + (e[1] - to[1]) * w, to[2] + (e[2] - to[2]) * w, to[3] + (e[3] - to[3]) * w }
+            local e = { M[1] + f[1] * len, M[2] + f[2] * len, M[3] + f[3] * len }
+            on = (e[1] - to[1]) ^ 2 + (e[2] - to[2]) ^ 2 + (e[3] - to[3]) ^ 2 <= math.max(1.5, 0.06 * len) ^ 2
+            to = e
           end
           -- (5.0) the end point is smoothed over about a tenth of a second, so the barrel's shake and the aim point's
           -- jumps between body parts don't make the beam twitch; a new target starts it afresh
           local E = s.beam_end
           -- (not for the Laser Sentry: its beam follows its barrel with smoothing of its own)
-          if E and not s.def.laser_follows_barrel and s.beam_target == st.target and t - (s.beam_t or 0) < 0.25 then
+          if E and not (st.fwd and not s.def.laser_at_enemy) and s.beam_target == st.target and t - (s.beam_t or 0) < 0.25 then
             local k = 1 - math.exp(-(t - s.beam_t) / BEAM_SMOOTH)
             to = { E[1] + (to[1] - E[1]) * k, E[2] + (to[2] - E[2]) * k, E[3] + (to[3] - E[3]) * k }
           end
           s.beam_end, s.beam_target, s.beam_t = to, st.target, t
-          add_beam(beams, M, to, GREEN, true)
+          add_beam(beams, M, to, GREEN, on)
         end
       end
     end
@@ -1664,6 +1750,10 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
           .. (st.spread_state and (', ' .. st.spread_state) or '')
         for _, l in ipairs(enemies_of(st)) do out[#out] = out[#out] .. '\n        ' .. l end
       end
+    end
+    if seaf_research then
+      local ok, lines = pcall(seaf_research.marker, me)
+      if ok then for _, l in ipairs(lines) do out[#out + 1] = l end else out[#out + 1] = 'SEAF research: marker error ' .. tostring(type(lines) == 'table' and lines[2] or lines) end
     end
     return out
   end
