@@ -1,6 +1,6 @@
 # Uploads each published GitHub release to Nexus Mods as a new version of the mod's main file.
-# Needs the secret NEXUSMODS (your Nexus Mods API key) in the repository's NEXUSMODS environment
-# (Settings, Environments, NEXUSMODS). Without it the run stops with a message and nothing is uploaded.
+# Needs the repository secret NEXUSMODS (your Nexus Mods API key; Settings, Secrets and variables, Actions).
+# Without it the run stops with a message and nothing is uploaded.
 # Run it by hand from the Actions tab (Run workflow) to upload an existing release again.
 name: Upload release to Nexus Mods
 
@@ -24,14 +24,13 @@ env:
 jobs:
   nexus:
     runs-on: ubuntu-latest
-    environment: NEXUSMODS   # the API key is an environment secret, only this job can read it
     steps:
       - name: Check the API key is set
         env:
           KEY: ${{ secrets.NEXUSMODS }}
         run: |
           if [ -z "$KEY" ]; then
-            echo "::error::Add the NEXUSMODS secret to the NEXUSMODS environment (Settings, Environments) first."
+            echo "::error::Add the NEXUSMODS repository secret (Settings, Secrets and variables, Actions) first."
             exit 1
           fi
 
