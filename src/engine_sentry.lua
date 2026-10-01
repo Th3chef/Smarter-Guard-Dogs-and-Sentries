@@ -13,6 +13,7 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
   local SCAN_SECONDS = 2.0          -- the game's list of AI agents is searched for sentries this often, and at once
                                     -- whenever the number of agents changes or one of ours drops out
   local HOLD, BACKOFF, LINGER = 0.25, 1.0, 0.3
+  local DEAD_HIDE = 1.5               -- (4.5.1) how long a killed enemy's entry stays hidden from the sentry that shot it (s)
   local BUSY_NODE = 10              -- an AI step in which sentries ignore being asked to choose again (test logs)
   -- (5.0) a sentry with 'laser_when_firing' (the Supply FRV's gun, stowed up on the roof until it swings down to
   -- fire, a tester's call) shows its laser only while firing, and this long after its last shot (seconds). (4.5, a
@@ -129,7 +130,7 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
   end
   local noted_events = 0
 
-  local function new_policy() return { unsafe_seen = {}, stuck = {}, sight_ok = {}, rest = {}, lit = {}, ignored = 0 } end
+  local function new_policy() return { unsafe_seen = {}, stuck = {}, sight_ok = {}, rest = {}, lit = {}, dead = {}, ignored = 0 } end
   -- a sentry's identity in its entity row: type, id, unit and the 'ours' flag (the rest of the row changes by itself)
   local function row_key(e) return e:sub(1, 16) .. string.char(bit.band(e:byte(21), 3)) end
 
@@ -922,6 +923,42 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
 
   -- bodies: who must not be hit (follows the Safety option); people: where the helldivers are, you always included
   -- (for the rules about enemies near a helldiver: priority and fire spreading)
+  -- (test builds, 4.5.1) what a sentry does in the 1.5 s after its target dies or is cleared, for the first 10 kills per
+  -- sentry kind: its target (the dead one, none or a new one), whether that entry is alive (in the game's registry,
+  -- flag 1), its AI step and selection timer. To see why a gun keeps shooting a body (a tester: the Supply FRV gun)
+  local ktrace_count = {}
+  local function ktrace_state(st, id)
+    local c = st.current
+    local who = st.target == 0 and 'none' or (st.target == id and 'the old one' or ('new ' .. st.target))
+    local life = st.target == 0 and '' or (not c and ' (not listed)' or string.format(' (%s, flag %d, %s)', c.alive and 'alive' or 'dead',
+      bit.band(c.flags or 0, 1), c.ent and 'in registry' or 'gone from registry'))
+    local now = u64(rd(rptr(A.g.clock, 'clock') + 24, 8, 'clock'), 0)
+    return string.format('%s%s step %d timer %.2f', who, life, st.node, (st.deadline - now) / 1e6)
+  end
+  -- (also, 'ask trace (test)': the same after the mod asks it to drop a target - safety, cover, armor, cooling... -
+  -- with nothing else it may pick, first 10 per sentry kind: does it keep firing at nothing for a second?)
+  local function kill_trace_start(s, st, t, why, label)
+    label = label or 'kill trace'
+    local k = s.def.name .. '/' .. label
+    if (ktrace_count[k] or 0) >= 10 or (s.P.ktrace and t - s.P.ktrace.t0 < 0.3) then return end
+    ktrace_count[k] = (ktrace_count[k] or 0) + 1
+    local id = st.target ~= 0 and st.target or (s.P.lost_from or 0)
+    local c = st.current
+    s.P.ktrace = { id = id, t0 = t, why = why, label = label, kind = (st.target ~= 0 and c and c.kind) or s.P.prev_kind, parts = {}, last = nil }
+  end
+  local function kill_trace_step(s, st, t)
+    local K = s.P.ktrace
+    if not K then return end
+    local ok, now = pcall(ktrace_state, st, K.id)
+    now = ok and now or ('unreadable: ' .. tostring(now))
+    local key = now:gsub(' timer %-?[%d%.]+$', '')
+    if key ~= K.last then K.last = key; K.parts[#K.parts + 1] = string.format('+%.2f %s', t - K.t0, now) end
+    if t - K.t0 >= 1.5 or #K.parts >= 12 then
+      s.P.ktrace = nil
+      event(string.format('%s (test): %s target %d (%s) %s: %s', K.label, s.def.name, K.id, K.kind and (LABELS[K.kind] or hexr(K.kind)) or 'type unknown', K.why, table.concat(K.parts, ' | ')))
+    end
+  end
+
   local function plan_sentry(s, st, bodies, t, people)
     local P, def, cands, target = s.P, s.def, st.candidates, st.target
     local armour_on = rawget(_G, 'SmarterGuardDogsArmor') == true   -- (Armor Intelligence: skipping, bursts, dropships)
@@ -1106,8 +1143,19 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
         end
       end
     end
-    local hide = union(U, N, Q, C, B, SP, G, O, D, HV)
-    if TESTER then st.hide_sets = { unsafe = U, armour = N, priority = Q, cooling = C, burst_rest = B, burning = SP, gunship_moving = G, out_of_sight = O, on_dropship = D, helldiver = HV } end
+    -- (4.5.1) enemies it was just steered off because they died: kept hidden while their entry is still in its list and
+    -- not alive, up to DEAD_HIDE s, so the game can't pick the body again when it chooses (a tester saw the Supply FRV
+    -- gun keep shooting corpses)
+    local DD = {}
+    if next(P.dead) then
+      local alive_now = {}
+      for _, c in ipairs(cands) do if c.alive then alive_now[c.id] = true end end
+      for id, until_t in pairs(P.dead) do
+        if t < until_t and not alive_now[id] then DD[id] = true else P.dead[id] = nil end
+      end
+    end
+    local hide = union(U, N, Q, C, B, SP, G, O, D, HV, DD)
+    if TESTER then st.hide_sets = { unsafe = U, armour = N, priority = Q, cooling = C, burst_rest = B, burning = SP, gunship_moving = G, out_of_sight = O, on_dropship = D, helldiver = HV, dead = DD } end
     -- (the helldivers' entries, hidden again right after the game's update: sentry_after)
     -- (4.5: by id, not by place - the game moves entries up its list when one before them goes, e.g. an enemy it
     -- just killed, and a helldiver's entry moved into a new place would have been left shown there)
@@ -1152,18 +1200,34 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
     local prev = P.prev_target or 0
     P.prev_target = target
     local cur = st.current
-    if target ~= 0 and not (cur and cur.alive) and P.lost_target ~= target and t - (P.lost_t or 0) >= 0.1
-      and st.node ~= BUSY_NODE and st.node ~= def.salvo_node then
-      P.lost_target, P.lost_t, P.lost_tries = target, t, 0
-      local r = kick(s, st, t, hide, {}, 'sentry_target_lost')
-      if r.kick then r.quiet = true; bump(session.actions, 'sentry_target_lost') end
+    if TESTER and target ~= 0 and target ~= prev then P.prev_kind = cur and cur.kind or nil end
+    -- (4.5.1) the body is hidden from it as well (P.dead), and if it goes back to the same dead enemy it is asked again
+    -- (0.2 s later, up to 2 more times; kick() backs off after two unanswered asks anyway)
+    if target ~= 0 and not (cur and cur.alive) and t - (P.lost_t or 0) >= (P.lost_target == target and 0.2 or 0.1) and st.node ~= BUSY_NODE and st.node ~= def.salvo_node
+      and (P.lost_target ~= target or (P.lost_again or 0) < 2) then
+      local again = P.lost_target == target
+      if again then P.lost_again = (P.lost_again or 0) + 1 else P.lost_target, P.lost_again = target, 0 end
+      P.lost_t, P.lost_tries = t, 0
+      P.dead[target] = t + DEAD_HIDE
+      if TESTER then kill_trace_start(s, st, t, again and 'back on the dead target' or 'target died') end
+      local r = kick(s, st, t, union(hide, { [target] = true }), { [target] = true }, 'sentry_target_lost')
+      if r.kick then r.quiet = true; bump(session.actions, again and 'sentry_target_lost_again' or 'sentry_target_lost') end
       return r
     end
-    if target == 0 and prev ~= 0 then P.lost_from, P.lost_tries = prev, 0 end
+    if target == 0 and prev ~= 0 then
+      P.lost_from, P.lost_tries = prev, 0
+      -- (not when the mod's own ask just cleared it: those get an 'ask trace')
+      if TESTER and not (P.ktrace and P.ktrace.id == prev) and t - (P.last_kick_t or -99) > 0.3 then kill_trace_start(s, st, t, 'target cleared by the game') end
+    end
     if target ~= 0 then P.lost_from = nil end
     if target == 0 and P.lost_from and st.node == (def.fire_node or FIRE_NODE) and (P.lost_tries or 0) < 2 and t - (P.lost_t or 0) >= 0.15 then
       local now = u64(rd(rptr(A.g.clock, 'clock') + 24, 8, 'clock'), 0)
-      if st.deadline > now then
+      -- (4.5.1) only when there is something it may pick: asked with nothing to choose, the game gives it a fresh
+      -- second in its firing step, firing at nothing (a tester's Supply FRV gun, 'shooting between targets'); left
+      -- alone, it stops when its old timer runs out
+      local any = false
+      if st.deadline > now then for _, c in ipairs(cands) do if open(c) and not hide[c.id] then any = true; break end end end
+      if any then
         P.lost_t, P.lost_tries = t, (P.lost_tries or 0) + 1
         bump(session.actions, 'sentry_target_lost')
         return { block = hide, kick = true, reason = 'sentry_target_lost', quiet = true }
@@ -1363,7 +1427,16 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
           st.dt = sdt
           if s.def.spares_helldivers then tesla_filter(s, st, bodies) end
           local req = plan_sentry(s, st, bodies, t, people)
+          if TESTER and req.kick and st.target ~= 0 and req.reason ~= 'sentry_target_lost' then
+            -- (an ask to drop a live target with nothing else it may pick: trace what it does next)
+            local any = false
+            for _, c in ipairs(st.candidates) do
+              if c.id ~= st.target and not req.block[c.id] and (c.eligible or (c.mask == BLANK and c.alive and (c.score or 0) > 0)) then any = true; break end
+            end
+            if not any then kill_trace_start(s, st, t, 'asked (' .. tostring(req.reason) .. '), nothing else to pick, AI step ' .. st.node, 'ask trace') end
+          end
           steer_sentry(s, st, req, me)
+          if TESTER then kill_trace_step(s, st, t) end
           local d = session.sentries[s.def.name]
           if d then
             d.out = d.out + sdt; if st.target ~= 0 then d.targeted = d.targeted + sdt end
@@ -1542,8 +1615,12 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
           local v = norm({ st.aim[1] - st.muzzle[1], st.aim[2] - st.muzzle[2], st.aim[3] - st.muzzle[3] })
           if v then off = string.format(', barrel %.0f deg off its aim', math.deg(math.acos(math.max(-1, math.min(1, dot3(v, st.fwd)))))) end
         end
-        out[#out + 1] = string.format('%s: target %d%s, AI step %d%s%s, %d enemies listed, hidden: %s%s', s.def.name, st.target,
-          c and c.kind and (' type ' .. hexr(c.kind) .. (LABELS[c.kind] and (' ' .. LABELS[c.kind]) or '')) or '',
+        local life = st.target == 0 and '' or (not c and ' (not listed)' or string.format(' (%s, flag %d, %s)', c.alive and 'alive' or 'dead',
+          bit.band(c.flags or 0, 1), c.ent and 'in registry' or 'gone from registry'))
+        local okn, now = pcall(function() return u64(rd(rptr(A.g.clock, 'clock') + 24, 8, 'clock'), 0) end)
+        if okn and now then life = life .. string.format(', timer %.2fs', (st.deadline - now) / 1e6) end
+        out[#out + 1] = string.format('%s: target %d%s%s, AI step %d%s%s, %d enemies listed, hidden: %s%s', s.def.name, st.target,
+          c and c.kind and (' type ' .. hexr(c.kind) .. (LABELS[c.kind] and (' ' .. LABELS[c.kind]) or '')) or '', life,
           st.node, st.synced and ', aiming' or '', off, #st.candidates, #hid > 0 and table.concat(hid, ', ') or 'none',
           me and string.format(', %.0f m from you', math.sqrt((st.base[1] - me[1]) ^ 2 + (st.base[2] - me[2]) ^ 2)) or '')
           .. (st.heat and string.format(', heat %.0f%% (%s)%s', 100 * st.heat, st.heat_from, s.P.cooling and ', cooling' or '') or '')
