@@ -533,10 +533,19 @@ local function plan(st)
     return kick({}, 'target_lost')
   end
   if st.target == 0 and prev ~= 0 then P.lost_from, P.lost_tries = prev, 0 end
+  -- (4.5.1) only when it has something it may pick: asked with nothing to choose, the game gives it a fresh timer in
+  -- its firing step and it fires at nothing (seen on the Supply FRV gun, the same rule); left alone it stops when its
+  -- old timer runs out
   if st.target == 0 and P.lost_from and st.node == 7 and st.deadline > st.now and (P.lost_tries or 0) < 2 and t - (P.lost_t or 0) >= 0.15 then
-    P.lost_t, P.lost_tries = t, (P.lost_tries or 0) + 1
-    if P.lost_tries == 1 then note_lost(st, 'target cleared, timer still running') end
-    return kick({}, 'target_lost')
+    local any = false
+    for _, c in ipairs(st.candidates) do
+      if (c.eligible or (c.mask == '    ' and c.alive and (c.score or 0) > 0)) and not hide[c.id] then any = true; break end
+    end
+    if any then
+      P.lost_t, P.lost_tries = t, (P.lost_tries or 0) + 1
+      if P.lost_tries == 1 then note_lost(st, 'target cleared, timer still running') end
+      return kick({}, 'target_lost')
+    end
   end
   if st.target ~= 0 then P.lost_from = nil end
   -- 2b) it stood down for your safety and has no target: the moment something is safe to shoot again, make it
