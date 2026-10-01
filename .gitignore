@@ -1,0 +1,7 @@
+# build outputs (made by src/build.py; the release zips are attached to GitHub Releases)
+src/build/*.zip
+src/build/*_smarter_guard_dogs.lua
+__pycache__/
+*.pyc
+# logs
+*.log
