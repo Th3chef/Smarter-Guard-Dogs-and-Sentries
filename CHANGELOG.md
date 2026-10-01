@@ -1,5 +1,9 @@
 # Changelog
 
+## 4.5.3
+
+Sentries stop firing the moment their last enemy dies or is lost: the game kept them (the Supply FRV gun most of all) shooting at where it was for about a second. The same goes for a safety stop with nothing else to shoot, so a sentry no longer fires on through you or a teammate for that second. A Tesla Tower the mod lets go of is now put back properly (before, it could stop picking new targets). New: Bingus' Mod Options Menu support - every option in game under ESC > MODS, laid out as in the mod manager - and a Laser Brightness option. The targeting laser now comes out of the barrel of every sentry and guard dog.
+
 ## 4.5.2
 
 The Flame Sentry only engages enemies its flames can reach (20 m); the game let it pick enemies well past that. Sentries no longer keep firing at nothing for a second after dropping a target with nothing else to shoot (for example the Laser Sentry after setting its last enemy alight, or while cooling down).
