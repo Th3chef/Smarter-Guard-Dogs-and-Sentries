@@ -1,5 +1,9 @@
 # Changelog
 
+## 4.5.2
+
+The Flame Sentry only engages enemies its flames can reach (20 m); the game let it pick enemies well past that. Sentries no longer keep firing at nothing for a second after dropping a target with nothing else to shoot (for example the Laser Sentry after setting its last enemy alight, or while cooling down).
+
 ## 4.5.1
 
 Sentries no longer go back to an enemy that just died (the Supply FRV gun kept shooting bodies on Illuminate missions): the body is kept out of its choices. Sentries and guard dogs no longer keep firing at nothing for a second when their target drops out of view with nothing else to shoot (the FRV gun was shooting between targets).
