@@ -1,0 +1,73 @@
+# Uploads each published GitHub release to Nexus Mods as a new version of the mod's main file.
+# Needs the repository secret NEXUSMODS_API_KEY (your Nexus Mods API key). Without it the run stops with a message
+# and nothing is uploaded. Run it by hand from the Actions tab (Run workflow) to upload an existing release again.
+name: Upload release to Nexus Mods
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to upload (for example v4.5.1)
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  NEXUS_MOD_ID: '16610'      # nexusmods.com/helldivers2/mods/16610
+  NEXUS_FILE_ID: '8035149'   # the main file's API File ID (Files tab, Advanced)
+  TAG: ${{ github.event.release.tag_name || inputs.tag }}
+
+jobs:
+  nexus:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check the API key is set
+        env:
+          KEY: ${{ secrets.NEXUSMODS_API_KEY }}
+        run: |
+          if [ -z "$KEY" ]; then
+            echo "::error::Add the NEXUSMODS_API_KEY repository secret (Settings, Secrets and variables, Actions) first."
+            exit 1
+          fi
+
+      - name: Download the mod zip from the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${TAG#v}"
+          FILE="Smarter-Guard-Dogs-and-Sentries-${VERSION}.zip"
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$FILE"
+          test -s "$FILE"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "FILE=$FILE" >> "$GITHUB_ENV"
+
+      - name: Changelog from the release notes
+        id: notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # the release notes up to the install instructions
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body -q .body \
+            | tr -d '\r' | awk '/^\*\*Install/ {exit} {print}' | sed -e 's/\*\*//g' > notes.txt
+          {
+            echo 'text<<NOTES_END'
+            cat notes.txt
+            echo 'NOTES_END'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Upload to Nexus Mods
+        uses: Nexus-Mods/upload-action@v1.0.0-beta.10
+        with:
+          api_key: ${{ secrets.NEXUSMODS_API_KEY }}
+          file_id: ${{ env.NEXUS_FILE_ID }}
+          mod_id: ${{ env.NEXUS_MOD_ID }}
+          filename: ${{ env.FILE }}
+          version: ${{ env.VERSION }}
+          display_name: Smarter Guard Dogs & Sentries ${{ env.VERSION }}
+          description: ${{ env.VERSION }} - see the Logs tab (changelog) for what changed.
+          changelog: ${{ steps.notes.outputs.text }}
+          archive_existing_version: true
+          update_mod_version: true
