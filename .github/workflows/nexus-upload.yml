@@ -68,13 +68,13 @@ jobs:
       - name: File description from the changelog
         id: desc
         run: |
-          # a hidden <!-- nexus-description: ... --> line in the release notes wins; otherwise the changelog
+          # a hidden <!-- nexus: ... --> line in the release notes wins (also <!-- nexus-description: ... -->); otherwise the changelog
           # on one line, fitted to Nexus's 255-character file description:
           # long asides in brackets go first, then whole points from the end
           python3 - <<'PY' >> "$GITHUB_OUTPUT"
           import os, re, sys
           MAX = 255
-          m = re.search(r'<!--\s*nexus-description:\s*(.*?)\s*-->', open('body.txt', encoding='utf-8').read(), re.S)
+          m = re.search(r'<!--\s*nexus(?:-description)?:\s*(.*?)\s*-->', open('body.txt', encoding='utf-8').read(), re.S)
           if m and m.group(1).strip():
               d = ' '.join(m.group(1).split())
               if len(d) > MAX:
