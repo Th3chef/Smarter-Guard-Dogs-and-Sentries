@@ -66,8 +66,9 @@ jobs:
           mod_id: ${{ env.NEXUS_MOD_ID }}
           filename: ${{ env.FILE }}
           version: ${{ env.VERSION }}
-          display_name: Smarter Guard Dogs & Sentries ${{ env.VERSION }}
-          description: ${{ env.VERSION }} - see the Logs tab (changelog) for what changed.
+          # (Nexus allows only letters, digits, spaces and _ ' ( ) . - in the name: no &)
+          display_name: Smarter Guard Dogs and Sentries ${{ env.VERSION }}
+          description: Version ${{ env.VERSION }}. See the changelog for what changed.
           changelog: ${{ steps.notes.outputs.text }}
           archive_existing_version: true
           update_mod_version: true
