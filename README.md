@@ -28,6 +28,7 @@ Smarter Guard Dogs & Sentries makes the shooting guard dog backpacks and your se
 - **Gunships first (Target Prioritization):** the Gatling, Autocannon, Rocket and Laser sentries go for Gunships (and Stingrays on Illuminate missions) before anything else. The Rocket Sentry only fires at one while it hovers, since its rockets miss a moving gunship.
 - **The right target for the gun (Target Prioritization):** the Rocket and Autocannon sentries go for Heavy armor first; the Machine Gun, Gatling and Laser sentries go for everything lighter first. An enemy right next to you always stays the target.
 - **Skips what it can't hurt (Armor Intelligence):** the Machine Gun and Gatling sentries skip Hulks, Chargers, Tanks and other Heavy armor and fire short bursts at Heavy Devastators; the Laser Sentry skips anything above Heavy. No sentry wastes ammo on dropships, and only the Rocket and Autocannon sentries (whose blast also hurts the dropship) shoot enemies still aboard one.
+- **Flame Sentry:** only engages enemies its flames can reach (20 m), not ones well out of range.
 - **Laser Sentry:** sets enemies alight and moves on to the next one, like the Rover, and cools down before it burns out (it reads the game's own heat meter and runs between 90% and 70% heat).
 - **Tesla Tower:** it no longer zaps you or your teammates when you stand in its range: the mod keeps helldivers off its list of targets. It also leaves enemies within 10 m of a helldiver alone so its arc doesn't chain into you.
 - **Armed Resupply Pod and Supply FRV guns:** the guns on Armed Resupply Pods and the M-103 Supply FRV get the same care as the Machine Gun Sentry: safety, armor skipping and the right targets. The FRV gun never stops for riders sitting in the FRV, only for anyone leaning out of a window to shoot.
@@ -60,7 +61,7 @@ Get the latest zip from the [Releases](../../releases/latest) page (the `Smarter
 
 1. Install Bingus Shared Loader v15 or newer.
 2. Remove any older version of Smarter Guard Dogs (& Sentries).
-3. Add Smarter-Guard-Dogs-and-Sentries-4.5.1.zip in Arsenal or the HD2 Mod Manager and check the options you want.
+3. Add Smarter-Guard-Dogs-and-Sentries-4.5.2.zip in Arsenal or the HD2 Mod Manager and check the options you want.
 4. Deploy, then restart the game.
 
 ## Uninstall
