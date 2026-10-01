@@ -49,9 +49,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # the release notes up to the install instructions
+          # the release notes up to the updating / download / install lines
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body -q .body \
-            | tr -d '\r' | awk '/^\*\*Install/ {exit} {print}' | sed -e 's/\*\*//g' > notes.txt
+            | tr -d '\r' | awk '/^(\*\*)?(Install|Updating|Download)/ {exit} {print}' | sed -e 's/\*\*//g' > notes.txt
           {
             echo 'text<<NOTES_END'
             cat notes.txt
