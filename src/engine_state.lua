@@ -95,7 +95,7 @@ local function team_wanted()
   local on = rawget(_G, 'SmarterGuardDogsTeammates') == true
   if on ~= team_state then
     team_state = on; session.team.off = not on
-    note('teammate safety: ' .. (on and 'on' or 'off (option not installed)'))
+    note('teammate safety: ' .. (on and 'on' or (rawget(_G, 'SmarterGuardDogsMenu') and 'off (in the mod options menu)' or 'off (option not installed)')))
   end
   return on
 end
@@ -109,7 +109,7 @@ do
     local on = rawget(_G, key) == true
     if noted[key] ~= on then
       noted[key] = on
-      note(name .. ': ' .. (on and 'on' or ('off (option not installed)' .. off_text)))
+      note(name .. ': ' .. (on and 'on' or ((rawget(_G, 'SmarterGuardDogsMenu') and 'off (in the mod options menu)' or 'off (option not installed)') .. off_text)))
     end
     return on
   end

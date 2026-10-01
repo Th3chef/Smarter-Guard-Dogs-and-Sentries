@@ -24,7 +24,15 @@ SENTRIES_MODULE = 'mods/chef/smarter_guard_dogs_sentries'
 TESLA_MODULE = 'mods/chef/smarter_guard_dogs_tesla'
 PRIORITY_MODULE = 'mods/chef/smarter_guard_dogs_priority'
 GLOW_MODULE = 'mods/chef/smarter_guard_dogs_glow'
-VERSION = '4.5.2'
+# (4.5.3) Laser Brightness: one tiny addon per sub-option, all under the same name (only one is installed at a time)
+BRIGHT_MODULE = 'mods/chef/smarter_guard_dogs_brightness'
+BRIGHTS = [('Normal (100%)', 1.0, 'Laser Brightness 100'), ('Dim (50%)', 0.5, 'Laser Brightness 50'), ('Softer (75%)', 0.75, 'Laser Brightness 75'),
+           ('Bright (150%)', 1.5, 'Laser Brightness 150'), ('Brightest (200%)', 2.0, 'Laser Brightness 200')]
+def bright_source(v):
+    return ('-- HD2-Addon: %s\n'
+            '-- Smarter Guard Dogs & Sentries - Laser Brightness (optional part): the targeting laser at %d%%.\n'
+            "rawset(_G, 'SmarterGuardDogsLaserBrightness', %s)\n" % (BRIGHT_MODULE, round(v * 100), repr(v))).encode('utf-8')
+VERSION = '4.5.3'
 NAME_SUFFIX = ''   # '' for releases, e.g. ' Test 3' for test builds
 ARCHIVE = '9ba626afa44a3aa3.patch_0'        # the game archive the shared loader reads addons from
 LUA_TYPE, MAGIC = 0xa14e8dfa2cd117e2, 0xF0000011
@@ -69,8 +77,8 @@ TITLE = 'Smarter Guard Dogs & Sentries'   # (4.0: the mod was "Smarter Guard Dog
 FILE_BASE = 'Smarter-Guard-Dogs-and-Sentries'
 DESC_COMMON = ('Smarter, safer aiming for your guard dog (Guard Dog, Rover, K-9), your sentries and the resupply pod and Supply FRV guns. '
     'They never shoot through you or your teammates, skip the dead, cover and armor they can\'t hurt, and pick the right targets. '
-    'The Tesla Tower stops zapping you. Optional targeting laser. Each part can be turned on or off in the options. '
-    'Requires Bingus Shared Loader v15 or newer.')
+    'The Tesla Tower stops zapping you. Optional targeting laser. Each part can be turned on or off in the options '
+    '(also in game with Mod Options Menu). Requires Bingus Shared Loader v15 or newer.')
 CORE_DIR, LASER_DIR, ARMOR_DIR, TEAM_DIR, SAFETY_DIR = 'Smarter Guard Dogs', 'Targeting Laser', 'Armor Intelligence', 'Teammate Safety', 'Safety'
 DOGS_DIR, SENTRIES_DIR, TESLA_DIR, PRIORITY_DIR = 'Guard Dogs', 'Sentries', 'Tesla Tower', 'Target Prioritization'
 GLOW_DIR = 'Targeting Laser Glow'
@@ -96,6 +104,7 @@ def package(read_only, out_zip, tester=False):
     tesla = lua_archive_bytes(TESLA_MODULE, addon_source('tesla_addon.lua', TESLA_MODULE))
     priority = lua_archive_bytes(PRIORITY_MODULE, addon_source('priority_addon.lua', PRIORITY_MODULE))
     glow = lua_archive_bytes(GLOW_MODULE, addon_source('glow_addon.lua', GLOW_MODULE))
+    brights = [(folder, lua_archive_bytes(BRIGHT_MODULE, bright_source(v))) for _, v, folder in BRIGHTS]
     name = TITLE + (' (DIAGNOSTIC - read only)' if read_only else '')
     desc = (('TEST BUILD (disable the release while testing). ' if NAME_SUFFIX else '')
             + ('PERSONAL TESTER BUILD: the release plus F8 markers and extra test logging. Install instead of the release, not next to it. ' if tester else '')
@@ -126,7 +135,7 @@ def package(read_only, out_zip, tester=False):
                  {'Name': 'Only your teammates', 'Description': 'Protects the other players; they may fire through you.',
                   'Image': 'options/option_teammates.png', 'Include': [TEAM_DIR]},
              ]},
-            {'Name': 'Targeting Laser', 'Description': 'Laser from your guard dog and your sentries (not the mortars) to their targets, shown '
+            {'Name': 'Targeting Laser', 'Description': 'Laser out of the barrel of your guard dog and your sentries (not the mortars) toward their targets, shown '
              'only on your screen: green while they fire, flashing red when the safety stops a shot (and a red ring around the rocket '
              'sentry while an enemy is too close for it to fire), flashing yellow when the dog\'s target goes out of sight (cover or smoke), off '
              'while the dog reloads. The Tesla Tower shows its reach as a yellow ring instead. Turn off to hide it.',
@@ -157,6 +166,10 @@ def package(read_only, out_zip, tester=False):
                  {'Name': 'Only Target Prioritization', 'Description': 'The right target first; they may shoot armor they can\'t hurt.',
                   'Image': 'options/option_priority.png', 'Include': [PRIORITY_DIR]},
              ]},
+            {'Name': 'Laser Brightness', 'Description': 'How bright the targeting laser is: its beams and rings, line or glow.',
+             'Image': 'options/option_laser.png',
+             'SubOptions': [{'Name': name, 'Description': 'The laser at %d%% of its normal brightness.' % round(v * 100) if v != 1 else 'The laser as it has always been.',
+                             'Image': 'options/option_laser.png', 'Include': [folder]} for name, v, folder in BRIGHTS]},
             {'Name': 'Guard Dogs', 'Description': 'The mod handles your guard dog (Guard Dog, Rover, K-9). Turn off to leave '
              'your dog to the game; your sentries and the rest of the mod keep working.',
              'Image': 'options/option_dogs.png', 'Include': [DOGS_DIR]},
@@ -173,7 +186,7 @@ def package(read_only, out_zip, tester=False):
         ],
     }
     # (the order shown in the mod manager: the mod, what it handles, intelligence, safety, the laser)
-    order = [CORE_OPTION, 'Guard Dogs', 'Sentries', 'Intelligence', 'Safety', 'Targeting Laser']
+    order = [CORE_OPTION, 'Guard Dogs', 'Sentries', 'Intelligence', 'Safety', 'Targeting Laser', 'Laser Brightness']
     manifest['Options'].sort(key=lambda o: order.index(o['Name']))
     with zipfile.ZipFile(out_zip, 'w', zipfile.ZIP_DEFLATED) as z:
         z.writestr('manifest.json', json.dumps(manifest, indent=2))
@@ -181,7 +194,7 @@ def package(read_only, out_zip, tester=False):
         images = {opt['Image'] for opt in manifest['Options']} | {sub['Image'] for opt in manifest['Options'] for sub in opt.get('SubOptions', [])}
         for img in sorted(images):   # option icons (options_icons.py, options_icons2.py)
             z.write(os.path.join(HERE, 'build', img.replace('/', os.sep)), img)
-        for folder, pak in [(CORE_DIR, core), (SAFETY_DIR, safety), (TEAM_DIR, team), (DOGS_DIR, dogs), (SENTRIES_DIR, sentries), (TESLA_DIR, tesla), (PRIORITY_DIR, priority), (LASER_DIR, laser), (GLOW_DIR, glow), (ARMOR_DIR, armor)]:
+        for folder, pak in [(CORE_DIR, core), (SAFETY_DIR, safety), (TEAM_DIR, team), (DOGS_DIR, dogs), (SENTRIES_DIR, sentries), (TESLA_DIR, tesla), (PRIORITY_DIR, priority), (LASER_DIR, laser), (GLOW_DIR, glow), (ARMOR_DIR, armor)] + brights:
             z.writestr(folder + '/' + ARCHIVE, pak)
             z.writestr(folder + '/' + ARCHIVE + '.gpu_resources', b'')
             z.writestr(folder + '/' + ARCHIVE + '.stream', b'')

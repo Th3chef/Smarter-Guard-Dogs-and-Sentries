@@ -22,6 +22,14 @@ local FIRE_STEP = 7                               -- the step where it is actual
 local FLASH_HZ = 6
 
 local laser = { state = 'not started', worlds = {} }
+-- (4.5.3) Laser Brightness (the option's sub-options, or Bingus' Mod Options Menu): a multiplier on every beam's and ring's
+-- colour - the lines' red, green and blue (the engine ignores their transparency), the glow's transparency. 1 = as
+-- before; read every frame
+laser.brightness = function()
+  local b = rawget(_G, 'SmarterGuardDogsLaserBrightness')
+  if type(b) ~= 'number' or b ~= b then return 1 end
+  return math.max(0.1, math.min(3, b))
+end
 local SR = rawget(_G, 'stingray')
 
 -- (4.0.1) how a beam looks. The engine draws 1-pixel lines, ignores their transparency and renders their colours
@@ -32,7 +40,6 @@ local SR = rawget(_G, 'stingray')
 -- (4.5) One solid colour from end to end (the 4.0.1-4.0.6 fade toward the far end is gone, a tester's call), and the
 -- green is a neon laser-pointer green, (0,200,20). A beam on a target ends in a small cross just in front of the
 -- enemy. The line object is depth-tested: walls and terrain hide the beam like a real one.
--- Test builds: F8 also shows a colour chart around you for 20 s (laser.add_calib) to find colours that look right.
 do
   local BEAM = {
     side = 0.004,     -- the side strands: metres from the core
@@ -85,33 +92,6 @@ do
     line(S.core, f[1], f[2], f[3], t[1], t[2], t[3])
   end
 
-  -- (test builds) the colour chart: 14 posts in a circle 3 m around where you pressed F8, each a colour to compare;
-  -- post N has N short bars on top to tell them apart. Posts 1-6: pure-ish greens from dark to light; 7-12: softer,
-  -- greyer greens from dark to light; 13 and 14: post 5 (the beam's core colour now) and post 12 at alpha 40, to see
-  -- whether the engine uses transparency at all.
-  local CHART = {
-    { 255, 10, 40, 12 }, { 255, 20, 80, 25 }, { 255, 35, 120, 40 }, { 255, 60, 180, 70 }, { 255, 80, 220, 100 }, { 255, 150, 255, 160 },
-    { 255, 40, 60, 40 }, { 255, 60, 100, 60 }, { 255, 90, 140, 90 }, { 255, 120, 180, 120 }, { 255, 160, 220, 160 }, { 255, 200, 255, 200 },
-    { 40, 80, 220, 100 }, { 40, 200, 255, 200 },
-  }
-  laser.add_calib = function(beams, t)
-    local c = laser.calib
-    if not c then return end
-    if t > c.until_t then laser.calib = nil; return end
-    local cos, sin = math.cos, math.sin
-    for k, col in ipairs(CHART) do
-      local a = 2 * math.pi * (k - 1) / #CHART
-      local x, y, z0 = c.at[1] + 3 * cos(a), c.at[2] + 3 * sin(a), c.at[3]
-      local sx, sy = -sin(a), cos(a)   -- (sideways, as seen from the middle)
-      for j = -1, 1 do
-        beams[#beams + 1] = { from = { x + sx * 0.02 * j, y + sy * 0.02 * j, z0 }, to = { x + sx * 0.02 * j, y + sy * 0.02 * j, z0 + 1.8 }, argb = col }
-      end
-      for n = 1, k do
-        local z = z0 + 1.9 + 0.08 * n
-        beams[#beams + 1] = { from = { x - sx * 0.15, y - sy * 0.15, z }, to = { x + sx * 0.15, y + sy * 0.15, z }, argb = col }
-      end
-    end
-  end
 end
 
 -- every world the engine reports right now (re-read each frame, so a closed world is never touched again)
@@ -201,6 +181,9 @@ local function laser_draw(beams, redraw)
     -- (has the set of rings changed since they were last built?)
     local sig = laser.ring_sig or {}
     local same = not redraw and #(rings or sig) == #sig and (rings ~= nil) == (#sig > 0)
+    -- (a new brightness rebuilds the rings too)
+    local BR = laser.brightness()
+    if not redraw and laser.ring_bright ~= BR then same = false; laser.ring_bright = BR end
     if same and rings then for i, r in ipairs(rings) do if sig[i] ~= r then same = false; break end end end
     for _, w in ipairs(worlds) do
       local lo = laser.worlds[w]
@@ -217,7 +200,11 @@ local function laser_draw(beams, redraw)
         local colours = {}
         local function colour(a)
           local c = colours[a]
-          if not c then c = SR.Color(a[1], a[2], a[3], a[4]); colours[a] = c end
+          if not c then
+            if BR == 1 then c = SR.Color(a[1], a[2], a[3], a[4])
+            else c = SR.Color(a[1], math.min(255, math.floor(a[2] * BR + 0.5)), math.min(255, math.floor(a[3] * BR + 0.5)), math.min(255, math.floor(a[4] * BR + 0.5))) end
+            colours[a] = c
+          end
           return c
         end
         if not redraw then
@@ -228,7 +215,7 @@ local function laser_draw(beams, redraw)
           local lines = not (laser.glow and laser.glow.on())
           for _, b in ipairs(beams) do
             if laser.styled(b) then if lines then laser.draw_styled(b, line) end   -- the dogs' and sentries' beams: core, side strands, cross
-            else LO.add_line(lo, colour(b.argb), V(b.from[1], b.from[2], b.from[3]), V(b.to[1], b.to[2], b.to[3])) end   -- (test builds' colour chart)
+            else LO.add_line(lo, colour(b.argb), V(b.from[1], b.from[2], b.from[3]), V(b.to[1], b.to[2], b.to[3])) end   -- (any other line)
           end
         end
         LO.dispatch(w, lo)
@@ -366,9 +353,10 @@ do
     local layered = G.layered
     local keep = ids
     local tri_fn = Gui.triangle
+    local BR = laser.brightness()
     local function tri(p0, p1, p2, a)
       local c = colours[a]
-      if not c then c = SR.Color(a[1], a[2], a[3], a[4]); colours[a] = c end
+      if not c then c = SR.Color(math.min(255, math.floor(a[1] * BR + 0.5)), a[2], a[3], a[4]); colours[a] = c end
       local id
       if layered then id = tri_fn(g, p0, p1, p2, 1, c)
       elseif layered == false then id = tri_fn(g, p0, p1, p2, c)
@@ -550,11 +538,12 @@ local function gun_point(st, to, learn)
     end
   end
   if s < 1 then return nil end
-  local p = { nd.pos[1] + dir[1] * s, nd.pos[2] + dir[2] * s, nd.pos[3] + dir[3] * s }
-  -- never draw the beam ending well away from the enemy
+  -- (4.5.3, a tester's call: the laser comes out of the barrel and runs along it, as far as the enemy, wherever the
+  -- barrel points; before, it fell back to pointing at the enemy when the barrel was off. Also returned: where the
+  -- beam starts (the barrel part) and whether its end is on the enemy, for the cross)
+  local p = { nd.pos[1] + dir[1] * len, nd.pos[2] + dir[2] * len, nd.pos[3] + dir[3] * len }
   local off = math.sqrt((p[1] - to[1]) ^ 2 + (p[2] - to[2]) ^ 2 + (p[3] - to[3]) ^ 2)
-  if off > math.max(GUN.off, GUN.off_share * len) then return nil end
-  return p
+  return p, nd.pos, off <= math.max(GUN.off, GUN.off_share * len)
 end
 
 -- what to show for this frame
@@ -570,8 +559,13 @@ local function laser_frame(st, beams, safety_t, safety_enemy, safety_step, cover
   -- (an enemy by id, looked up only when a beam is drawn)
   local function by_id(id) for _, c in ipairs(st.candidates) do if c.id == id then return c end end end
   local t = os.clock()
-  -- the beam leaves the front of the drone, facing whatever it points at
-  local function beam(to, argb)
+  -- the beam leaves its barrel when that is known (from: the barrel part; on: its end is on the enemy, for the cross),
+  -- otherwise the front of the drone, facing whatever it points at
+  local function beam(to, argb, from, on)
+    if from then
+      beams[#beams + 1] = { from = from, to = to, argb = argb, dot = argb == GREEN and on ~= false }
+      return
+    end
     local dx, dy, dz = to[1] - D[1], to[2] - D[2], to[3] - (D[3] + LASER_RISE)
     local len = math.sqrt(dx * dx + dy * dy + dz * dz)
     if len < LASER_FORWARD + 0.5 then return end
@@ -588,8 +582,8 @@ local function laser_frame(st, beams, safety_t, safety_enemy, safety_step, cover
     local on = math.floor((t - safety_t) * FLASH_HZ * 2) % 2 == 0
     if e and e.pos and on then
       local to = { e.pos[1], e.pos[2], e.pos[3] + (st.dog.aim_rise or AIM_RISE) }
-      local gp = st.dog.barrel ~= false and gun_point(st, to, false) or nil
-      beam(st.dog.barrel ~= false and gp or to, RED)
+      local gp, gfrom = gun_point(st, to, false)
+      beam(gp or to, RED, gp and gfrom)
     end
   elseif cover_t and t - cover_t < RED_SECONDS and ATTACK_STEPS[cover_step] and (ATTACK_STEPS[st.node] or st.target == 0)
     and st.target ~= cover_enemy then
@@ -608,9 +602,9 @@ local function laser_frame(st, beams, safety_t, safety_enemy, safety_step, cover
     if e and e.pos then
       local to = { e.pos[1], e.pos[2], e.pos[3] + (st.dog.aim_rise or AIM_RISE) }
       local far = e.d2 and e.d2 > GUN.min_range ^ 2
-      local gp = st.dog.barrel ~= false and gun_point(st, to, e.visible and far) or nil
+      local gp, gfrom, gon = gun_point(st, to, e.visible and far)
       laser.last_gun, laser.last_to = gp, to     -- (the research log compares the two)
-      beam(st.dog.barrel ~= false and gp or to, GREEN)
+      beam(gp or to, GREEN, gp and gfrom, gon)
     end
   end
 end
