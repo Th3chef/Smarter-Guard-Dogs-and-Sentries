@@ -51,6 +51,7 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
   local DROPSHIP = { reach = 14, below = 12, above = 4, above_sentry = 5 }
   -- self-defence: enemies within 'reach' m of the sentry come before every priority rule (gunships included)
   local SELF = { reach = 8 }
+  local RANGE_KEEP = 2                -- (4.5.2) a sentry with a 'range' keeps its current target until it is this much further out (m)
   -- fire spreading (Laser Sentry, like the Rover): its beam sets enemies alight and the burn does most of the damage,
   -- so once one is burning ('fire' seconds of beam, or 'lock' seconds on it without) it moves on to the unlit enemy
   -- nearest you within 'reach'. Enemies it lit in the last 'burn' seconds are left to burn while unlit ones are
@@ -927,6 +928,7 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
   -- sentry kind: its target (the dead one, none or a new one), whether that entry is alive (in the game's registry,
   -- flag 1), its AI step and selection timer. To see why a gun keeps shooting a body (a tester: the Supply FRV gun)
   local ktrace_count = {}
+  local range_notes = {}   -- (test builds, 4.5.2) 'range (test)' notes so far, per sentry kind
   local function ktrace_state(st, id)
     local c = st.current
     local who = st.target == 0 and 'none' or (st.target == id and 'the old one' or ('new ' .. st.target))
@@ -959,6 +961,26 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
     end
   end
 
+  -- (4.5.2) dropping its target for any reason but safety: asked to choose again only when it has something else
+  -- it may pick. Asked with nothing to pick, the game gives it a fresh second in its firing step and it fires at
+  -- nothing (a tester's logs: the FRV gun, the Gatling, the Laser Sentry after setting its last enemy alight).
+  -- Otherwise the target is only hidden (it is in 'hide' already) and it stops when its old timer runs out. Counted
+  -- once per target and reason either way (a repeated ask is quiet). Safety stops still always ask (hidden only, it
+  -- would keep firing at the target until its timer ran out)
+  local function drop_target(s, st, t, hide, reason)
+    local P, target = s.P, st.target
+    local first = P.drop_target ~= target or P.drop_reason ~= reason
+    P.drop_target, P.drop_reason = target, reason
+    for _, c in ipairs(st.candidates) do
+      if c.id ~= target and open(c) and not hide[c.id] then
+        local r = kick(s, st, t, hide, { [target] = true }, reason)
+        if r.kick and not first then r.quiet = true end
+        return r
+      end
+    end
+    return { block = hide, kick = false, reason = reason, count = first }
+  end
+
   local function plan_sentry(s, st, bodies, t, people)
     local P, def, cands, target = s.P, s.def, st.candidates, st.target
     local armour_on = rawget(_G, 'SmarterGuardDogsArmor') == true   -- (Armor Intelligence: skipping, bursts, dropships)
@@ -967,6 +989,12 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
     if TESTER and target ~= P.seen_target then
       P.seen_target = target
       local c = st.current
+      -- (4.5.2) a sentry with a range: how far each new target is, first 20 per kind (to check the range in game)
+      if def.range and c and c.d2 and (range_notes[def.name] or 0) < 20 and not (P.range_seen and P.range_seen[target]) then
+        P.range_seen = P.range_seen or {}; P.range_seen[target] = true
+        range_notes[def.name] = (range_notes[def.name] or 0) + 1
+        note(string.format('range (test): %s picked %d at %.1f m (its range %d m)', def.name, target, math.sqrt(c.d2), def.range))
+      end
       if c and c.kind then
         local a = ARMOR[c.kind]
         bump(session.sentry_types, def.name .. ': ' .. hexr(c.kind) .. ((a and (' ' .. a.name .. ' AV' .. a.av)) or (LABELS[c.kind] and (' ' .. LABELS[c.kind])) or ''))
@@ -1042,6 +1070,12 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
     local ships_wanted = not def.hits_carried and armour_on
     local air_still = def.air_still and prio_on
     local U, N, O, C, B, G, D, SP, Q, HV = NONE, NONE, NONE, NONE, NONE, NONE, NONE, NONE, NONE, NONE
+    -- (4.5.2) out of its reach (a sentry with a 'range', the Flame Sentry): enemies further from its muzzle than that
+    -- are hidden from it; its current target only once it is RANGE_KEEP further out, so one at the edge isn't dropped
+    -- and picked again over and over
+    local RG = NONE
+    local range2 = def.range and def.range ^ 2
+    local keep_range2 = def.range and (def.range + RANGE_KEEP) ^ 2
     local spare = def.spares_helldivers
     local spare_all = spare and team_wanted()
     -- (with the Safety option off you are fair game: your own entry, within 1.5 m of you, isn't hidden)
@@ -1056,6 +1090,7 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
         if cannot_hurt(def, c) then N = put(N, id) end
         if sight and not c.visible and (id ~= target or firing or (c.memory or 0) <= COVER_S.grace) and not (P.sight_ok[id] and t < P.sight_ok[id]) then O = put(O, id) end
         if cooling then C = put(C, id) end
+        if range2 and c.d2 and c.d2 > (id == target and keep_range2 or range2) then RG = put(RG, id) end
         if bursts and P.rest[id] and t < P.rest[id] then B = put(B, id) end
         if air_still and c.pos and c.kind and AIR_FIRST[c.kind] and air_moving(c, t) then G = put(G, id) end
       end
@@ -1154,8 +1189,8 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
         if t < until_t and not alive_now[id] then DD[id] = true else P.dead[id] = nil end
       end
     end
-    local hide = union(U, N, Q, C, B, SP, G, O, D, HV, DD)
-    if TESTER then st.hide_sets = { unsafe = U, armour = N, priority = Q, cooling = C, burst_rest = B, burning = SP, gunship_moving = G, out_of_sight = O, on_dropship = D, helldiver = HV, dead = DD } end
+    local hide = union(U, N, Q, C, B, SP, G, O, D, HV, DD, RG)
+    if TESTER then st.hide_sets = { unsafe = U, armour = N, priority = Q, cooling = C, burst_rest = B, burning = SP, gunship_moving = G, out_of_sight = O, on_dropship = D, helldiver = HV, dead = DD, out_of_reach = RG } end
     -- (the helldivers' entries, hidden again right after the game's update: sentry_after)
     -- (4.5: by id, not by place - the game moves entries up its list when one before them goes, e.g. an enemy it
     -- just killed, and a helldiver's entry moved into a new place would have been left shown there)
@@ -1245,23 +1280,25 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
       -- was put on hold for longer. The target stays hidden meanwhile.)
       if st.node == BUSY_NODE or st.node == def.salvo_node then return { block = hide, kick = false } end
       -- its target is still aboard a dropship: choose again now
-      if D[target] then return kick(s, st, t, hide, { [target] = true }, 'sentry_on_dropship') end
+      if D[target] then return drop_target(s, st, t, hide, 'sentry_on_dropship') end
       -- its target went out of sight (it would be firing into the wall): choose again now
-      if O[target] then return kick(s, st, t, hide, { [target] = true }, 'sentry_out_of_sight') end
+      if O[target] then return drop_target(s, st, t, hide, 'sentry_out_of_sight') end
+      -- (4.5.2) its target is past its reach (the Flame Sentry)
+      if RG[target] then return drop_target(s, st, t, hide, 'sentry_out_of_reach') end
       -- short burst done (Heavy Devastator): leave it for a while
-      if B[target] and P.burst_now == target then P.burst_now = nil; return kick(s, st, t, hide, { [target] = true }, 'sentry_burst_done') end
+      if B[target] and P.burst_now == target then P.burst_now = nil; return drop_target(s, st, t, hide, 'sentry_burst_done') end
       -- fire spreading: its target is alight, move on (or hold the beam while everything near is burning)
-      if SP[target] and P.lit_now == target then P.lit_now = nil; return kick(s, st, t, hide, { [target] = true }, 'sentry_spread') end
+      if SP[target] and P.lit_now == target then P.lit_now = nil; return drop_target(s, st, t, hide, 'sentry_spread') end
       -- overheating: drop its target so it stops firing and cools
-      if C[target] then return kick(s, st, t, hide, { [target] = true }, 'sentry_cooling') end
+      if C[target] then return drop_target(s, st, t, hide, 'sentry_cooling') end
       -- armour it can't hurt
-      if N[target] and not P.stuck[target] then return kick(s, st, t, hide, { [target] = true }, 'sentry_cannot_hurt') end
+      if N[target] and not P.stuck[target] then return drop_target(s, st, t, hide, 'sentry_cannot_hurt') end
       -- a gunship it is on started moving (rocket sentry): switch to something else until it hovers again
-      if G[target] then return kick(s, st, t, hide, { [target] = true }, 'sentry_gunship_moving') end
+      if G[target] then return drop_target(s, st, t, hide, 'sentry_gunship_moving') end
       -- a better-suited enemy (by armour) is in sight: switch to it (at most every 'calm' seconds)
       if Q[target] and t - (P.prio_t or -99) >= PRIORITY.calm then
         P.prio_t = t
-        return kick(s, st, t, hide, { [target] = true }, 'sentry_priority')
+        return drop_target(s, st, t, hide, 'sentry_priority')
       end
     end
     -- it stood down for someone's safety and has nothing: the moment something is safe, choose right away
@@ -1283,7 +1320,7 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
       d.stops = d.stops + 1
       if (st.unsafe_why[st.target] or ''):find('teammate') then d.mate_stops = d.mate_stops + 1 end
     end
-    if req.reason == 'sentry_burst_done' or req.reason == 'sentry_spread' or req.reason == 'sentry_gunship_moving' or req.reason == 'sentry_out_of_sight' or req.reason == 'sentry_on_dropship' then
+    if req.reason == 'sentry_burst_done' or req.reason == 'sentry_spread' or req.reason == 'sentry_gunship_moving' or req.reason == 'sentry_out_of_sight' or req.reason == 'sentry_on_dropship' or req.reason == 'sentry_out_of_reach' then
       if d then d[req.reason] = (d[req.reason] or 0) + 1 end
       return
     end
@@ -1309,7 +1346,7 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
   end
 
   local function steer_sentry(s, st, req, me)
-    if req.kick and not req.quiet then note_sentry(s, st, req, me) end
+    if (req.kick and not req.quiet) or req.count then note_sentry(s, st, req, me) end
     if READ_ONLY then return end
     if read(s.rec_addr, 4) ~= st.rec_head then return end
     hider_apply(s.H, st.candidates, req.block)
@@ -1427,13 +1464,13 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
           st.dt = sdt
           if s.def.spares_helldivers then tesla_filter(s, st, bodies) end
           local req = plan_sentry(s, st, bodies, t, people)
-          if TESTER and req.kick and st.target ~= 0 and req.reason ~= 'sentry_target_lost' then
+          if TESTER and (req.kick or req.count) and st.target ~= 0 and req.reason ~= 'sentry_target_lost' then
             -- (an ask to drop a live target with nothing else it may pick: trace what it does next)
             local any = false
             for _, c in ipairs(st.candidates) do
               if c.id ~= st.target and not req.block[c.id] and (c.eligible or (c.mask == BLANK and c.alive and (c.score or 0) > 0)) then any = true; break end
             end
-            if not any then kill_trace_start(s, st, t, 'asked (' .. tostring(req.reason) .. '), nothing else to pick, AI step ' .. st.node, 'ask trace') end
+            if not any then kill_trace_start(s, st, t, (req.kick and 'asked (' or 'only hidden (') .. tostring(req.reason) .. '), nothing else to pick, AI step ' .. st.node, 'ask trace') end
           end
           steer_sentry(s, st, req, me)
           if TESTER then kill_trace_step(s, st, t) end

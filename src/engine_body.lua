@@ -110,7 +110,7 @@ local function write_log()
   table.sort(snames)
   for _, name in ipairs(snames) do
     local d = session.sentries[name]
-    f:write(string.format('  %-18s placed %d, out %s, with a target %.0f%% of that; safety stops %d (for a teammate %d), armor skips %d, priority switches %d%s%s%s%s%s%s%s\n',
+    f:write(string.format('  %-18s placed %d, out %s, with a target %.0f%% of that; safety stops %d (for a teammate %d), armor skips %d, priority switches %d%s%s%s%s%s%s%s%s\n',
       name, d.placed, mmss(d.out), d.out > 0 and 100 * d.targeted / d.out or 0, d.stops, d.mate_stops, d.armour, d.priority or 0,
       d.cooldowns and string.format(', cool-downs %d', d.cooldowns) or '',
       d.sentry_burst_done and string.format(', short bursts %d', d.sentry_burst_done) or '',
@@ -118,6 +118,7 @@ local function write_log()
       d.sentry_gunship_moving and string.format(', left a moving gunship %d', d.sentry_gunship_moving) or '',
       d.sentry_out_of_sight and string.format(', dropped one out of sight %d', d.sentry_out_of_sight) or '',
       d.sentry_on_dropship and string.format(', left one still on a dropship %d', d.sentry_on_dropship) or '',
+      d.sentry_out_of_reach and string.format(', dropped one out of reach %d', d.sentry_out_of_reach) or '',
       d.too_close and d.too_close > 0 and string.format(', an enemy inside its minimum range %s', mmss(d.too_close)) or ''))
   end
   if session.other_sentries > 0 then
@@ -341,7 +342,8 @@ local SENTRIES = {
   -- overheated after about 28 s on targets, so the estimate uses 11 a second. The game's own heat meter is used when found)
   { name = 'Laser Sentry', type = type_hash('56070f36cfffa8a8'), ai = 308, line = 0.35, spread = 0.002, sweep = true, barrel_axis = 2, pen = 4, heat = { cap = 250, rate = 11, cool = 3.8 },
     prefer = 'light', air_first = true, laser_follows_barrel = true, spreads_fire = true, fire_node = 13 },   -- (ours runs along its barrel, over its own beam, turning with it)
-  { name = 'Flame Sentry', type = type_hash('820cc3bafe962858'), ai = 207, line = 1.0, spread = 0.03, splash = 2.5, sweep = true },
+  { name = 'Flame Sentry', type = type_hash('820cc3bafe962858'), ai = 207, line = 1.0, spread = 0.03, splash = 2.5, sweep = true,
+    range = 20 },   -- (4.5.2, a tester's call: the game lets it pick enemies well past its flames; 'range' = metres from its muzzle)
   -- (4.0) the Tesla Tower (hellpod/tesla_turret): its arc reaches 20 m and chains from its target to whoever stands
   -- next to it, and it zaps standing helldivers in range (wiki). 'spares_helldivers': it targets only enemies the mod
   -- has marked (4.5, engine_sentry.lua tesla_filter); the helldivers' entries are also hidden from it every frame, and
