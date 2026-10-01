@@ -1,5 +1,9 @@
 # Changelog
 
+## 4.5.1
+
+Sentries no longer go back to an enemy that just died (the Supply FRV gun kept shooting bodies on Illuminate missions): the body is kept out of its choices. Sentries and guard dogs no longer keep firing at nothing for a second when their target drops out of view with nothing else to shoot (the FRV gun was shooting between targets).
+
 ## 4.5.0
 
 Now also handles the guns on Armed Resupply Pods and the M-103 Supply FRV: the FRV gun never stops for riders sitting in the FRV, only for anyone leaning out of a window, and its laser shows only while it fires. Sentries move on the moment their target dies. A much safer Tesla Tower: it no longer picks helldivers directly, and it leaves enemies within 10 m of a helldiver alone (was 5 m); its ring is now yellow and sits about 4 feet up so uneven ground doesn't hide it. Targeting laser: choose a solid neon green Line or the new Glow, and a steadier beam on the Gatling. The Guard Dog's short bursts at Heavy Devastators work again. Enemy list checked against the Enemy Codex (War Strider cannons, emplacement bases, the Incendiary MG Devastator's shield). Lighter on your PC: idle sentries are checked less often. The log is now SmarterGuardDogsAndSentries.log in %LOCALAPPDATA%\CowboyBingus\Helldivers2\Logs.
