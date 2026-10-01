@@ -67,17 +67,9 @@ def source(read_only, tester=False):
 
 TITLE = 'Smarter Guard Dogs & Sentries'   # (4.0: the mod was "Smarter Guard Dogs" up to 3.0; same GUID and internal names)
 FILE_BASE = 'Smarter-Guard-Dogs-and-Sentries'
-DESC_COMMON = ('More efficient, optimized aiming for the Guard Dog, Rover and K-9, and safer, smarter sentries. The dogs and your sentries '
-    'never shoot through you (or, optionally, your teammates); sentries also won\'t swing their fire across you, and mortars and the '
-    'rocket sentry leave enemies next to a helldiver alone, and the Tesla Tower no longer zaps you or arcs into you. The dogs go for the closest threat and skip the dead, enemies behind cover and '
-    'armor they can\'t hurt. Sentries stop firing into walls, deal with enemies at their feet first, skip armor they can\'t hurt and '
-    'dropships, and pick the right targets: Gunships and Stingrays first for the Gatling, autocannon, rocket and Laser sentries, then Heavy '
-    'armor for the rocket and autocannon and everything lighter for the machine gun, Gatling and Laser. The Laser Sentry spreads its fire '
-    'and cools down before it burns out; the Rover spreads its fire too. Sentries move on the moment their target dies. The guns on '
-    'armed resupply pods and the Supply FRV get the same care (the FRV gun never stops for riders sitting in it, only for those '
-    'leaning out of a window). Optional targeting laser, a line or a glow (and a range ring for the Tesla Tower). '
-    'In the options you choose what it handles (guard dogs, sentries, with or without the Tesla Tower) and who the safety protects (you, your teammates, both or no one). '
-    'It changes no game files, stats or damage: it only filters which enemies your dog and sentries pick. '
+DESC_COMMON = ('Smarter, safer aiming for your guard dog (Guard Dog, Rover, K-9), your sentries and the resupply pod and Supply FRV guns. '
+    'They never shoot through you or your teammates, skip the dead, cover and armor they can\'t hurt, and pick the right targets. '
+    'The Tesla Tower stops zapping you. Optional targeting laser. Each part can be turned on or off in the options. '
     'Requires Bingus Shared Loader v15 or newer.')
 CORE_DIR, LASER_DIR, ARMOR_DIR, TEAM_DIR, SAFETY_DIR = 'Smarter Guard Dogs', 'Targeting Laser', 'Armor Intelligence', 'Teammate Safety', 'Safety'
 DOGS_DIR, SENTRIES_DIR, TESLA_DIR, PRIORITY_DIR = 'Guard Dogs', 'Sentries', 'Tesla Tower', 'Target Prioritization'
