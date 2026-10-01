@@ -56,8 +56,8 @@ jobs:
         run: |
           # the release notes up to the updating / download / install lines, one point per line
           # (Nexus shows each changelog line as its own bullet, so the "- " bullets and blank lines go)
-          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body -q .body \
-            | tr -d '\r' | awk '/^(\*\*)?(Install|Updating|Download)/ {exit} {print}' \
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body -q .body | tr -d '\r' > body.txt
+          cat body.txt | awk '/^(\*\*)?(Install|Updating|Download)/ {exit} {print}' \
             | sed -e 's/\*\*//g' -e 's/^[[:space:]]*[-*][[:space:]]\+//' | grep -v '^[[:space:]]*$' > notes.txt || true
           {
             echo 'text<<NOTES_END'
@@ -68,11 +68,19 @@ jobs:
       - name: File description from the changelog
         id: desc
         run: |
-          # the changelog on one line, fitted to Nexus's 255-character file description:
+          # a hidden <!-- nexus-description: ... --> line in the release notes wins; otherwise the changelog
+          # on one line, fitted to Nexus's 255-character file description:
           # long asides in brackets go first, then whole points from the end
           python3 - <<'PY' >> "$GITHUB_OUTPUT"
-          import os, re
+          import os, re, sys
           MAX = 255
+          m = re.search(r'<!--\s*nexus-description:\s*(.*?)\s*-->', open('body.txt', encoding='utf-8').read(), re.S)
+          if m and m.group(1).strip():
+              d = ' '.join(m.group(1).split())
+              if len(d) > MAX:
+                  d = d[:MAX - 3].rsplit(' ', 1)[0] + '...'
+              print('text=' + d)
+              sys.exit(0)
           head = os.environ['VERSION'] + ': '
           items = []
           for line in open('notes.txt', encoding='utf-8'):
