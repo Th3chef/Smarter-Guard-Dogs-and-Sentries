@@ -58,6 +58,40 @@ jobs:
             echo 'NOTES_END'
           } >> "$GITHUB_OUTPUT"
 
+      - name: File description from the changelog
+        id: desc
+        run: |
+          # the changelog on one line, fitted to Nexus's 255-character file description:
+          # long asides in brackets go first, then whole points from the end
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import os, re
+          MAX = 255
+          head = os.environ['VERSION'] + ': '
+          items = []
+          for line in open('notes.txt', encoding='utf-8'):
+              t = re.sub(r'^\s*(#+|[-*\u2022]|\d+[.)])\s*', '', line).strip()
+              if not t or t.lower().startswith('smarter guard dogs'):
+                  continue  # blank lines and the title line
+              items.append(t if t[-1] in '.!?' else t + '.')
+          def text(xs):
+              return head + ' '.join(xs)
+          if len(text(items)) > MAX:
+              items = [re.sub(r'\s*\([^)]{20,}\)', '', i) for i in items]
+          if len(text(items)) > MAX:
+              more = ' More in the changelog.'
+              while len(items) > 1 and len(text(items)) + len(more) > MAX:
+                  items.pop()
+              d = text(items)
+              if len(d) + len(more) > MAX:
+                  d = d[:MAX - len(more) - 3].rsplit(' ', 1)[0] + '...'
+              d += more
+          else:
+              d = text(items)
+          if not items:
+              d = 'Version ' + os.environ['VERSION'] + '.'
+          print('text=' + d)
+          PY
+
       - name: Upload to Nexus Mods
         uses: Nexus-Mods/upload-action@v1.0.0-beta.10
         with:
@@ -68,7 +102,7 @@ jobs:
           version: ${{ env.VERSION }}
           # (Nexus allows only letters, digits, spaces and _ ' ( ) . - in the name: no &)
           display_name: Smarter Guard Dogs and Sentries ${{ env.VERSION }}
-          description: Version ${{ env.VERSION }}. See the changelog for what changed.
+          description: ${{ steps.desc.outputs.text }}
           changelog: ${{ steps.notes.outputs.text }}
           archive_existing_version: true
           update_mod_version: true
