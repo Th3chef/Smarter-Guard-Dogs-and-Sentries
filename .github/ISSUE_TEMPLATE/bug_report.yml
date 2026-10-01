@@ -1,0 +1,65 @@
+name: Bug report
+description: Something the mod does wrong, or an error in its log
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! The log is the most useful part: it shows what the mod did and any errors.
+  - type: input
+    id: version
+    attributes:
+      label: Mod version
+      description: Shown at the top of the log and in your mod manager.
+      placeholder: "4.5.0"
+    validations:
+      required: true
+  - type: input
+    id: game
+    attributes:
+      label: Game version or date of the last game update
+      placeholder: "e.g. the October 2026 patch"
+  - type: checkboxes
+    id: options
+    attributes:
+      label: Options you have turned on
+      options:
+        - label: Guard Dogs
+        - label: Sentries (all)
+        - label: Sentries (all but the Tesla Tower)
+        - label: Intelligence (Armor Intelligence and/or Target Prioritization)
+        - label: Safety
+        - label: Targeting Laser (Line)
+        - label: Targeting Laser (Glow)
+  - type: input
+    id: unit
+    attributes:
+      label: Dog, sentry or gun involved
+      placeholder: "e.g. Rover, Gatling Sentry, Tesla Tower, Supply FRV gun"
+  - type: dropdown
+    id: session
+    attributes:
+      label: Were you playing solo, hosting or joining?
+      options: [Solo, Hosting, Joining someone else's game]
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+      description: Roughly when in the mission it happened helps match it to the log.
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Log file
+      description: |
+        Drag SmarterGuardDogsAndSentries.log into this box. You'll find it in
+        %LOCALAPPDATA%\CowboyBingus\Helldivers2\Logs (paste that into the File Explorer address bar and press Enter).
+    validations:
+      required: true
+  - type: checkboxes
+    id: others
+    attributes:
+      label: Other mods
+      options:
+        - label: I'm not using another mod that changes guard dog or sentry targeting
