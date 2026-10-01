@@ -16,7 +16,7 @@ permissions:
   contents: read
 
 env:
-  NEXUS_MOD_ID: '16610'      # nexusmods.com/helldivers2/mods/16610
+  NEXUS_MOD_ID: '26280904900834'   # the mod's Unique Mod ID (Files tab, Advanced; not the 16610 in the page address)
   NEXUS_FILE_ID: '8035149'   # the main file's API File ID (Files tab, Advanced)
   TAG: ${{ github.event.release.tag_name || inputs.tag }}
 
