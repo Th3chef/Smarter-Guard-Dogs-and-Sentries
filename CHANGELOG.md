@@ -1,5 +1,9 @@
 # Changelog
 
+## 4.6.2
+
+The Supply FRV gun stops firing the moment its last enemy is gone (the game kept it shooting at the spot for a second), and it and the Armed Resupply Pod gun no longer spray while swinging round to an enemy far off to the side: they turn, then fire. The Flame Sentry switches to closer enemies sooner and moves on from burning enemies to the next unlit one, closer ones first, never leaving one next to you.
+
 ## 4.6.1
 
 The Flame Sentry now engages enemies out to 30 m (was 20 m), goes for the closest enemies first and deals with one right at it before anything else, instead of the game's pick of far-off enemies while others close in.
