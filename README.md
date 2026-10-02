@@ -35,11 +35,11 @@ Smarter Guard Dogs & Sentries makes the shooting guard dog backpacks and your se
 - **Works with Sentry Aim Retention.**
 
 ## Optional targeting laser
-A beam shown only on your screen, out of the barrel of your dog and your sentries (not the mortars, which fire over cover) toward their targets: green while firing, flashing red when the safety stops a shot (and a red ring flashes around the Rocket Sentry while an enemy is too close to it to fire), flashing yellow when the dog's target goes out of sight, and off while the dog reloads. The Tesla Tower shows its 20 m reach as a yellow ring instead, lit the whole time it is out. It comes out of each gun's barrel and turns with it (the Rocket and Autocannon sentries: toward where the game aims them, ahead of a moving enemy), and on the Supply FRV gun it shows only while the gun fires.
+A beam shown only on your screen, out of the barrel of your dog and your sentries (not the mortars, which fire over cover) toward their targets: green while firing, flashing red when the safety stops a shot (and a red ring flashes around the Rocket Sentry while an enemy is too close to it to fire), flashing yellow when the dog's target goes out of sight, and off while the dog reloads. The Tesla Tower shows its 20 m reach as a yellow ring instead, lit the whole time it is out. It leaves each gun's muzzle: along the barrel for the sentries and the Guard Dog, turning with it, and toward where the game aims for the Rover, the K-9 and the Rocket and Autocannon sentries (ahead of a moving enemy). On the Supply FRV gun it shows only while the gun fires.
 
 - **Line** (the default): a thin neon green line with a small cross where it hits. Walls and objects hide it.
 - **Glow**: a soft glowing beam with a bright spot on the target. It looks much better than the line, but it shows through walls and objects (the game draws it on top of the world).
-- **Laser Brightness**: Normal, Dim (50%), Softer (75%), Bright (150%) or Brightest (200%), for the beams and rings, line or glow.
+- **Laser Brightness**: Dim (50%), Softer (75%), Normal, Bright (150%) or Brightest (200%), for the beams and rings, line or glow.
 
 Only your own dog and sentries are affected (the Safety option also protects the other players from them). Works hosting or joining, finds what it needs again after game patches, and is light on your PC. Hot Dog and Dog Breath are not changed.
 
@@ -65,7 +65,7 @@ Get the latest zip from the [Releases](../../releases/latest) page (the `Smarter
 
 1. Install Bingus Shared Loader v15 or newer.
 2. Remove any older version of Smarter Guard Dogs (& Sentries).
-3. Add Smarter-Guard-Dogs-and-Sentries-4.5.3.zip in Arsenal or the HD2 Mod Manager and check the options you want.
+3. Add Smarter-Guard-Dogs-and-Sentries-4.6.0.zip in Arsenal or the HD2 Mod Manager and check the options you want.
 4. Deploy, then restart the game.
 
 ## Uninstall
