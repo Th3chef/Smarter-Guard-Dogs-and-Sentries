@@ -358,8 +358,9 @@ local SENTRIES = {
   { name = 'Laser Sentry', type = type_hash('56070f36cfffa8a8'), ai = 308, line = 0.35, spread = 0.002, sweep = true, barrel_axis = 2, pen = 4, heat = { cap = 250, rate = 11, cool = 3.8 },
     prefer = 'light', air_first = true, spreads_fire = true, fire_node = 13 },   -- (ours runs along its barrel, over its own beam, turning with it)
   { name = 'Flame Sentry', type = type_hash('820cc3bafe962858'), ai = 207, line = 1.0, spread = 0.03, splash = 2.5, sweep = true,
-    range = 30, prefer = 'near' },   -- ('range' = metres from its muzzle: 4.5.2 set 20, a tester's call as the game let it pick
-    -- enemies well past its flames; 4.6.1 30, a tester's call as its flames reach about 34 m. 'near': closest first, no armor tiers)
+    range = 30, prefer = 'near', spreads_fire = 'keep' },   -- ('range' = metres from its muzzle: 4.5.2 set 20, a tester's call as the game let it pick
+    -- enemies well past its flames; 4.6.1 30, a tester's call as its flames reach about 34 m. 'near': closest first, no armor tiers;
+    -- 4.6.2 'keep': it moves on from an enemy it has set alight to the next unlit one, a tester's call)
   -- (4.0) the Tesla Tower (hellpod/tesla_turret): its arc reaches 20 m and chains from its target to whoever stands
   -- next to it, and it zaps standing helldivers in range (wiki). 'spares_helldivers': it targets only enemies the mod
   -- has marked (4.5, engine_sentry.lua tesla_filter); the helldivers' entries are also hidden from it every frame, and
@@ -376,11 +377,14 @@ local SENTRIES = {
   -- archive (263277e5added56c, with the ammo rack) and the Supply FRV's (149f685717737cae). Treated like the machine gun:
   -- skips armour it can't hurt (saving its rounds), short bursts at Heavy Devastators, unarmoured enemies first. 'ais':
   -- either of the Gatling template's two ids is accepted. The FRV's gun moves with the vehicle and fires past its driver
-  { name = 'Resupply Pod Gun', type = type_hash('73681ffd58fa1a90'), ai = 213, ais = { [212] = true, [213] = true }, line = 0.45, spread = 0.01, sweep = true, barrel_axis = 2, pen = 3, bursts = true, prefer = 'light' },
+  { name = 'Resupply Pod Gun', type = type_hash('73681ffd58fa1a90'), ai = 213, ais = { [212] = true, [213] = true }, line = 0.45, spread = 0.01, sweep = true, barrel_axis = 2, pen = 3, bursts = true, prefer = 'light',
+    turn_hold = 30 },   -- (4.6.2: as the Supply FRV gun, whose AI it runs - turns to an enemy far round without firing)
   -- (4.5: barrel_axis 2 like the Gatling's, whose AI they run on: a Test 28 log found axis 2+ at 0.987 on the FRV gun;
   -- learning it on a moving vehicle failed as often as not)
   { name = 'Supply FRV Gun', type = type_hash('4df41f84668d07fb'), ai = 212, ais = { [212] = true, [213] = true }, line = 0.45, spread = 0.01, sweep = true, barrel_axis = 2, pen = 3, bursts = true, prefer = 'light',
-    vehicle = true, laser_when_firing = true },   -- (test builds log where its riders sit relative to it and to its line of fire)
+    vehicle = true, laser_when_firing = true, turn_hold = 30 },   -- (test builds log where its riders sit relative to it and to its line of fire)
+    -- (turn_hold, 4.6.2, a tester: it wasted ammo swinging from one enemy to the next while firing - after a kill, the
+    -- next enemy more than this many degrees off its barrel is turned to without firing; see engine_sentry.lua)
 }
 local SENTRY_BY_TYPE = {}
 for _, d in ipairs(SENTRIES) do d.sentry = true; SENTRY_BY_TYPE[d.type] = d end

@@ -36,9 +36,10 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
   -- enemies first, the machine gun, Gatling and Laser sentries for unarmoured ones; by distance (4.6.1, prefer = 'near',
   -- the Flame Sentry), the closest first. Only enemies in sight within 'reach' metres count, and an enemy within
   -- 'near_you' metres of a helldiver is never pushed back (it is the threat right now).
-  local PRIORITY = { reach = 80, near_you = 8, calm = 0.5, closer = 5, closer_keep = 8 }
+  local PRIORITY = { reach = 80, near_you = 8, calm = 0.5, closer = 3, closer_keep = 4 }
   -- (4.6.1) prefer = 'near' (the Flame Sentry): no armor tiers - an enemy more than 'closer' m further from its muzzle
   -- than the closest one it can pick waits (its current target only past 'closer_keep' m, so it doesn't flick between two)
+  -- (4.6.2, a tester: it still stayed on a burning enemy farther out while one walked in: 3 / 4 m, were 5 / 8)
   -- short bursts (machine gun and Gatling vs Heavy Devastators: their shield eats the ammo): fire this long at one,
   -- then leave it alone this long - the same as the Guard Dog
   local BURST_S = { fire = 1.0, rest = 3.0 }
@@ -60,6 +61,9 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
   -- nearest you within 'reach'. Enemies it lit in the last 'burn' seconds are left to burn while unlit ones are
   -- about. When everything near is already burning it holds its beam (and its heat) unless a burning enemy is
   -- within 'near_you' metres of a helldiver.
+  -- (4.6.2) spreads_fire = 'keep' (the Flame Sentry, a tester's call): the same, but a burning enemy next to a
+  -- helldiver is never left, it is left only for an unlit one at most PRIORITY.closer_keep m farther away (closer
+  -- ones first), and when everything near is burning it keeps firing (no holding back)
   local SPREAD = { fire = 0.3, lock = 1.0, burn = 3.0, reach = 50, near_you = 10 }
   -- Gunships come before everything else for the Gatling, autocannon, rocket and Laser sentries ('air_first')
   -- (Automaton Gunship; Illuminate Stingray)
@@ -958,13 +962,19 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
   -- flag 1), its AI step and selection timer. To see why a gun keeps shooting a body (a tester: the Supply FRV gun)
   local ktrace_count = {}
   local range_notes = {}   -- (test builds, 4.5.2) 'range (test)' notes so far, per sentry kind
-  local function ktrace_state(st, id)
+  local function ktrace_state(s, st, id)
     local c = st.current
     local who = st.target == 0 and 'none' or (st.target == id and 'the old one' or ('new ' .. st.target))
     local life = st.target == 0 and '' or (not c and ' (not listed)' or string.format(' (%s, flag %d, %s)', c.alive and 'alive' or 'dead',
       bit.band(c.flags or 0, 1), c.ent and 'in registry' or 'gone from registry'))
     local now = u64(rd(rptr(A.g.clock, 'clock') + 24, 8, 'clock'), 0)
-    return string.format('%s%s step %d timer %.2f', who, life, st.node, (st.deadline - now) / 1e6)
+    -- (4.6.2) and its targeting state's target and second id (+0, +4): 0 / 32767 once let go
+    local ts = read(s.tstate, 8)
+    local tss = ts and string.format(' ts %d/%d', u32(ts, 0), u32(ts, 4)) or ''
+    -- (and how long ago its AI record says it lost its target, +408: it fires on at the spot for 1 s after)
+    local lt = read(s.rec_addr + 408, 8)
+    local lost = lt and string.format(' lost %.2fs ago', (now - u64(lt, 0)) / 1e6) or ''
+    return string.format('%s%s step %d%s timer %.2f%s', who, life, st.node, tss, (st.deadline - now) / 1e6, lost)
   end
   -- (also, 'ask trace (test)': the same after the mod asks it to drop a target - safety, cover, armor, cooling... -
   -- with nothing else it may pick, first 10 per sentry kind: does it keep firing at nothing for a second?)
@@ -980,14 +990,60 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
   local function kill_trace_step(s, st, t)
     local K = s.P.ktrace
     if not K then return end
-    local ok, now = pcall(ktrace_state, st, K.id)
+    local ok, now = pcall(ktrace_state, s, st, K.id)
     now = ok and now or ('unreadable: ' .. tostring(now))
-    local key = now:gsub(' timer %-?[%d%.]+$', '')
+    local key = now:gsub(' timer %-?[%d%.]+.*$', '')
     if key ~= K.last then K.last = key; K.parts[#K.parts + 1] = string.format('+%.2f %s', t - K.t0, now) end
     if t - K.t0 >= 1.5 or #K.parts >= 12 then
       s.P.ktrace = nil
       event(string.format('%s (test): %s target %d (%s) %s: %s', K.label, s.def.name, K.id, K.kind and (LABELS[K.kind] or hexr(K.kind)) or 'type unknown', K.why, table.concat(K.parts, ' | ')))
     end
+  end
+
+  -- (test builds, 4.6.2) when a sentry's target dies or the game clears it in its firing step: what the mod decided
+  -- and the other enemies it lists (nearest 8 within 60 m) - open to pick or not (flag, score) and what hid them.
+  -- First 10 per sentry kind (a tester: the Supply FRV gun doesn't move on after a kill)
+  local function kill_decision_note(s, st, target, cands, hide, any, what, yes, no, key)
+    local k = s.def.name .. '/' .. (key or 'kill decision')
+    if (ktrace_count[k] or 0) >= 10 then return end
+    ktrace_count[k] = (ktrace_count[k] or 0) + 1
+    local rows = {}
+    for _, c in ipairs(cands) do if c.id ~= target and c.d2 and c.d2 < 3600 then rows[#rows + 1] = c end end
+    table.sort(rows, function(x, y) return x.d2 < y.d2 end)
+    local out = {}
+    for i = 1, math.min(#rows, 8) do
+      local c = rows[i]
+      local why = {}
+      for name, set in pairs(st.hide_sets or {}) do if set[c.id] then why[#why + 1] = name end end
+      out[#out + 1] = string.format('%d %.0f m %s%s%s', c.id, math.sqrt(c.d2), c.alive and 'alive' or 'dead',
+        c.eligible and ', open' or string.format(', not open (flag %d, score %s, %s)', bit.band(c.flags or 0, 1), tostring(c.score or 0),
+          c.mask == BLANK and 'hidden by the mod' or 'shown'),
+        #why > 0 and (', hidden: ' .. table.concat(why, '/')) or '')
+    end
+    event(string.format('%s (test): %s target %d %s, AI step %d: %s; %d others listed%s', key or 'kill decision', s.def.name, target, what, st.node,
+      any and yes or no, #rows, #out > 0 and (': ' .. table.concat(out, '; ')) or ''))
+  end
+
+  -- (4.6.2) turn_hold (the Supply FRV gun and the Armed Resupply Pod gun, which runs the same AI): after a kill the game keeps it in its firing step while it swings to the
+  -- next enemy, spraying the whole way (a tester: "wastes ammo moving from target to target"). True when every enemy
+  -- it may pick next is more than def.turn_hold degrees off its barrel: then it isn't asked to switch at once but let
+  -- go of (its loss time moved back), so it turns to the next one in its aiming step and fires once on it. Only after
+  -- the game has cleared its target (the usual way for the FRV gun)
+  local function turn_far(s, st, target, cands, hide)
+    local deg = s.def.turn_hold
+    if not deg or not st.fwd or not st.muzzle then return false end
+    local m, f, lim = st.muzzle, st.fwd, math.cos(math.rad(deg))
+    local seen = false
+    for _, c in ipairs(cands) do
+      if c.id ~= target and c.pos and open(c) and not hide[c.id] then
+        local v = norm({ c.pos[1] - m[1], c.pos[2] - m[2], c.pos[3] + 1.0 - m[3] })
+        if v then
+          seen = true
+          if dot3(v, f) >= lim then return false end
+        end
+      end
+    end
+    return seen
   end
 
   -- (4.5.2) dropping its target for any reason but safety: asked to choose again only when it has something else
@@ -1157,19 +1213,22 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
     -- sentry is kept on until it is dead)
     if def.spreads_fire then
       local reach2, near2 = SPREAD.reach ^ 2, SPREAD.near_you ^ 2
-      local unlit, necessary = false, false
+      local unlit, necessary, ud2 = false, false, nil
+      local keep_on = def.spreads_fire == 'keep'
       for _, c in ipairs(cands) do
         local id = c.id
-        if c.pos and c.visible and open(c) and not U[id] and not N[id] and not C[id] and not D[id] and c.d2 and c.d2 <= reach2 then
+        if c.pos and c.visible and open(c) and not U[id] and not N[id] and not C[id] and not D[id] and not RG[id] and c.d2 and c.d2 <= reach2 then
           if P.lit[id] then
             if near_body(people, c.pos, near2) or near_sentry(s, st, c) then necessary = true end
-          else unlit = true end
+          else unlit = true; if not ud2 or c.d2 < ud2 then ud2 = c.d2 end end
         end
       end
-      st.spread_state = unlit and 'spreading' or (necessary and 'finishing a close one' or 'letting them burn')
-      if unlit or not necessary then
+      st.spread_state = unlit and 'spreading' or (necessary and 'finishing a close one' or (keep_on and 'all burning, still firing' or 'letting them burn'))
+      if unlit or (not necessary and not keep_on) then
         for _, c in ipairs(cands) do
-          if P.lit[c.id] and in_play(c, st) and (unlit or not near_body(people, c.pos, near2)) and not near_sentry(s, st, c) then SP = put(SP, c.id) end
+          -- ('keep': only for an unlit enemy at most 'closer_keep' m farther than the burning one - closer ones first)
+          if P.lit[c.id] and in_play(c, st) and ((unlit and not keep_on) or not near_body(people, c.pos, near2)) and not near_sentry(s, st, c)
+            and not (keep_on and c.d2 and ud2 and math.sqrt(c.d2) + PRIORITY.closer_keep < math.sqrt(ud2)) then SP = put(SP, c.id) end
         end
       end
     end
@@ -1293,6 +1352,9 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
       -- the release below lets go of its aim at once (as for a target the game cleared, 4.5.1)
       local any = false
       for _, c in ipairs(cands) do if c.id ~= target and open(c) and not hide[c.id] then any = true; break end end
+      -- (turn_hold applies only once the game has cleared the target, below: while it still holds the dead one, only
+      -- hiding it can leave it on the body up to its timer - every FRV kill in a tester's logs came as a clear)
+      if TESTER then kill_decision_note(s, st, target, cands, hide, any, 'died', 'asked to choose again', 'only hidden (nothing else it may pick)') end
       if not any then
         bump(session.actions, 'sentry_dead_target_hidden')
         return { block = union(hide, { [target] = true }), kick = false, reason = 'sentry_target_lost', quiet = true }
@@ -1314,6 +1376,13 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
       -- alone, it stops when its old timer runs out
       local any = false
       if st.deadline > now then for _, c in ipairs(cands) do if open(c) and not hide[c.id] then any = true; break end end end
+      local far = any and turn_far(s, st, P.lost_from, cands, hide)
+      if TESTER and (P.lost_tries or 0) == 0 then kill_decision_note(s, st, P.lost_from, cands, hide, any and not far, 'cleared by the game (still firing)', 'asked to choose again',
+        far and 'let go of its aim (the next enemy is far round: turn to it without firing)' or 'let go of its aim (nothing else it may pick)') end
+      if far then
+        if (P.lost_tries or 0) == 0 then bump(session.actions, 'sentry_turn_hold') end
+        any = false
+      end
       if any then
         P.lost_t, P.lost_tries = t, (P.lost_tries or 0) + 1
         bump(session.actions, 'sentry_target_lost')
@@ -1323,7 +1392,8 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
       -- the gun stays in its firing step, shooting at where the enemy was - about 1 s after the game cleared the target
       -- in its AI record, whatever its timer (a tester's record traces: the FRV gun's AI cleared its own copies at its
       -- next think and stayed in step 12; it left the step the moment the targeting state went to target 0, second id
-      -- 32767). The mod lets go of it the same way at once (release_target); up to two tries
+      -- 32767). The mod lets go of it the same way at once, and (4.6.2) moves back its loss time, which is what really
+      -- ends the firing (steer_sentry); up to two tries
       P.lost_t, P.lost_tries = t, (P.lost_tries or 0) + 1
       bump(session.actions, 'sentry_target_released')
       return { block = hide, kick = false, release = P.lost_from, reason = 'sentry_target_lost', quiet = true }
@@ -1359,6 +1429,25 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
       if Q[target] and t - (P.prio_t or -99) >= PRIORITY.calm then
         P.prio_t = t
         return drop_target(s, st, t, hide, 'sentry_priority')
+      end
+    end
+    -- (test builds, 4.6.2) no target for 1.5 s while live enemies are listed within 50 m: what holds them back (up to 10
+    -- per sentry kind, at most one every 8 s per sentry; a tester: the Supply FRV gun has a target only 8% of the time)
+    if TESTER then
+      if target ~= 0 then P.idle_since = nil
+      else
+        P.idle_since = P.idle_since or t
+        if t - P.idle_since >= 1.5 and t - (P.idle_note_t or -99) >= 8 then
+          local near, any = false, false
+          for _, c in ipairs(cands) do
+            if c.alive and c.d2 and c.d2 < 2500 then near = true; if open(c) and not hide[c.id] then any = true end end
+          end
+          if near then
+            P.idle_note_t = t
+            kill_decision_note(s, st, 0, cands, hide, any, string.format('(none for %.1f s)', t - P.idle_since),
+              'something is open to pick, the game hasn\'t picked it', 'nothing open to pick', 'idle')
+          end
+        end
       end
     end
     -- it stood down for someone's safety and has nothing: the moment something is safe, choose right away
@@ -1410,19 +1499,44 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
     if READ_ONLY then return end
     if read(s.rec_addr, 4) ~= st.rec_head then return end
     hider_apply(s.H, st.candidates, req.block)
+    -- (the game clock, read once for both writes below)
+    local now = (req.kick or req.release) and u64(rd(rptr(A.g.clock, 'clock') + 24, 8, 'clock'), 0)
     if req.kick then
-      local now = u64(rd(rptr(A.g.clock, 'clock') + 24, 8, 'clock'), 0)
       if st.deadline > now and st.deadline - now <= 1000000 then
         if not write(s.rec_addr + 152, u64bytes(now)) then stats.write_failures = stats.write_failures + 1 end
       end
     end
     if req.release then
-      -- (4.5.3) its targeting state lets go of the old target as the game's own does after a second: target 0, the
-      -- second id 32767. Only while it still holds that same target and its AI record has none
+      -- (4.5.3) its targeting state lets go of the old target (target 0, second id 32767, the game's own values), and
+      -- (4.6.2) its loss time is moved back a second: after losing its target the AI fires on at the last known spot
+      -- until 1 s after the loss time its record holds (+408, stamped by the game; a tester's Test 7 scans), whatever
+      -- its targeting state says - the Supply FRV gun even puts that back every frame. With the time moved back, the
+      -- game's own check ends the firing at its next update. Only while it still holds that same target, its AI record
+      -- has none, and the loss time is from the last second
       local ts = read(s.tstate, 8)
       local rec = read(s.rec_addr, 28)
+      local wrote = false
       if ts and rec and u32(ts, 0) == req.release and u32(rec, 24) == 0 then
-        if not write(s.tstate, pack32(0) .. pack32(32767)) then stats.write_failures = stats.write_failures + 1 end
+        wrote = write(s.tstate, pack32(0) .. pack32(32767))
+        if not wrote then stats.write_failures = stats.write_failures + 1 end
+        local lt = read(s.rec_addr + 408, 8)
+        if lt then
+          local age = now - u64(lt, 0)
+          if age >= 0 and age < 1000000 then
+            if write(s.rec_addr + 408, u64bytes(now - 1000001)) then req.lost_moved = age else stats.write_failures = stats.write_failures + 1 end
+          end
+        end
+      end
+      -- (test builds, 4.6.2) what it found and did, first 10 per sentry kind (a tester: the Supply FRV gun keeps
+      -- firing ~1 s after its target dies although the release ran)
+      if TESTER then
+        local k = s.def.name .. '/release'
+        if (ktrace_count[k] or 0) < 10 then
+          ktrace_count[k] = (ktrace_count[k] or 0) + 1
+          event(string.format('release (test): %s let go of %d: its targeting state %s, AI target %s, step %d: %s', s.def.name, req.release,
+            ts and string.format('%d/%d', u32(ts, 0), u32(ts, 4)) or 'unreadable', rec and tostring(u32(rec, 24)) or 'unreadable', st.node,
+            (wrote and 'written 0/32767' or 'not written (it no longer held that target)') .. (req.lost_moved and string.format('; its loss time (%.2f s ago) moved back 1 s', req.lost_moved / 1e6) or '')))
+        end
       end
     end
   end
