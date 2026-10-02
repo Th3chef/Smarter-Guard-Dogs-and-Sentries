@@ -28,7 +28,7 @@ Smarter Guard Dogs & Sentries makes the shooting guard dog backpacks and your se
 - **Gunships first (Target Prioritization):** the Gatling, Autocannon, Rocket and Laser sentries go for Gunships (and Stingrays on Illuminate missions) before anything else. The Rocket Sentry only fires at one while it hovers, since its rockets miss a moving gunship.
 - **The right target for the gun (Target Prioritization):** the Rocket and Autocannon sentries go for Heavy armor first; the Machine Gun, Gatling and Laser sentries go for everything lighter first. An enemy right next to you always stays the target.
 - **Skips what it can't hurt (Armor Intelligence):** the Machine Gun and Gatling sentries skip Hulks, Chargers, Tanks and other Heavy armor and fire short bursts at Heavy Devastators; the Laser Sentry skips anything above Heavy. No sentry wastes ammo on dropships, and only the Rocket and Autocannon sentries (whose blast also hurts the dropship) shoot enemies still aboard one.
-- **Flame Sentry:** only engages enemies its flames can reach (20 m), not ones well out of range.
+- **Flame Sentry:** engages enemies its flames can reach (30 m), not ones well out of range, and goes for the closest first, so an enemy closing in comes before one farther out (Target Prioritization).
 - **Laser Sentry:** sets enemies alight and moves on to the next one, like the Rover, and cools down before it burns out (it reads the game's own heat meter and runs between 90% and 70% heat).
 - **Tesla Tower:** it no longer zaps you or your teammates when you stand in its range: the mod keeps helldivers off its list of targets. It also leaves enemies within 10 m of a helldiver alone so its arc doesn't chain into you.
 - **Armed Resupply Pod and Supply FRV guns:** the guns on Armed Resupply Pods and the M-103 Supply FRV get the same care as the Machine Gun Sentry: safety, armor skipping and the right targets. The FRV gun never stops for riders sitting in the FRV, only for anyone leaning out of a window to shoot.
@@ -48,7 +48,7 @@ Only your own dog and sentries are affected (the Safety option also protects the
 - **Smarter Guard Dogs and Sentries** - the core. Keep this on.
 - **Guard Dogs** - turn off to leave your guard dog to the game.
 - **Sentries** - your sentries and the guns on resupply pods and the Supply FRV. Choose *All sentries* or *All but the Tesla Tower*, or turn off to leave them to the game.
-- **Intelligence** - choose *Armor Intelligence and Target Prioritization*, *Only Armor Intelligence* or *Only Target Prioritization*, or turn off to leave both to the game. Armor Intelligence: skipping armor they can't hurt, short bursts at Heavy Devastators and skipping dropships. Target Prioritization: the closest threat first for the dogs; self-defense, Gunships and the armor that suits the gun first for the sentries.
+- **Intelligence** - choose *Armor Intelligence and Target Prioritization*, *Only Armor Intelligence* or *Only Target Prioritization*, or turn off to leave both to the game. Armor Intelligence: skipping armor they can't hurt, short bursts at Heavy Devastators and skipping dropships. Target Prioritization: the closest threat first for the dogs; self-defense, Gunships and the armor that suits the gun first for the sentries (the closest first for the Flame Sentry).
 - **Safety** - choose who they never fire through: *You and your teammates*, *Only you* or *Only your teammates*. Turn off at your own risk.
 - **Targeting Laser** - choose *Line* (the default) or *Glow*, or turn off to hide the laser.
 - **Laser Brightness** - choose *Normal (100%)* (the default), *Dim (50%)*, *Softer (75%)*, *Bright (150%)* or *Brightest (200%)*.
@@ -65,7 +65,7 @@ Get the latest zip from the [Releases](../../releases/latest) page (the `Smarter
 
 1. Install Bingus Shared Loader v15 or newer.
 2. Remove any older version of Smarter Guard Dogs (& Sentries).
-3. Add Smarter-Guard-Dogs-and-Sentries-4.6.0.zip in Arsenal or the HD2 Mod Manager and check the options you want.
+3. Add Smarter-Guard-Dogs-and-Sentries-4.6.1.zip in Arsenal or the HD2 Mod Manager and check the options you want.
 4. Deploy, then restart the game.
 
 ## Uninstall
