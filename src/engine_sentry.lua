@@ -32,10 +32,13 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
   -- for other kinds whose turns are checked (the Flame Sentry) it is learned while it fires at enemies in plain view
   -- (the part's axis that tracks its aim point best); until then the turn check waits
   local BARREL = { frames = 30, min_cos = 0.97, tries = 4 }
-  -- priority by armour (with armour skipping on): the rocket and autocannon sentries go for armoured (Heavy or more)
-  -- enemies first, the machine gun, Gatling and Laser sentries for unarmoured ones. Only enemies in sight within 'reach' metres count, and
-  -- an enemy within 'near_you' metres of a helldiver is never pushed back (it is the threat right now).
-  local PRIORITY = { reach = 80, near_you = 8, calm = 0.5 }
+  -- priority (Target Prioritization): by armour, the rocket and autocannon sentries go for armoured (Heavy or more)
+  -- enemies first, the machine gun, Gatling and Laser sentries for unarmoured ones; by distance (4.6.1, prefer = 'near',
+  -- the Flame Sentry), the closest first. Only enemies in sight within 'reach' metres count, and an enemy within
+  -- 'near_you' metres of a helldiver is never pushed back (it is the threat right now).
+  local PRIORITY = { reach = 80, near_you = 8, calm = 0.5, closer = 5, closer_keep = 8 }
+  -- (4.6.1) prefer = 'near' (the Flame Sentry): no armor tiers - an enemy more than 'closer' m further from its muzzle
+  -- than the closest one it can pick waits (its current target only past 'closer_keep' m, so it doesn't flick between two)
   -- short bursts (machine gun and Gatling vs Heavy Devastators: their shield eats the ammo): fire this long at one,
   -- then leave it alone this long - the same as the Guard Dog
   local BURST_S = { fire = 1.0, rest = 3.0 }
@@ -1170,10 +1173,11 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
         end
       end
     end
-    -- priority by armour (rocket/autocannon: armoured first; machine gun/Gatling/Laser: unarmoured first). Enemies
-    -- that are burning, resting between short bursts or hidden for any other reason don't count as the better choice
+    -- priority (rocket/autocannon: armoured first; machine gun/Gatling/Laser: unarmoured first; Flame: the closest
+    -- first). Enemies that are burning, resting between short bursts, out of reach or hidden for any other reason
+    -- don't count as the better choice
     if def.prefer and prio_on then
-      local heavy = def.prefer == 'heavy'
+      local heavy, near_first = def.prefer == 'heavy', def.prefer == 'near'
       local reach2, near2 = PRIORITY.reach ^ 2, PRIORITY.near_you ^ 2
       -- self-defence first: while an enemy it can hurt (and isn't holding off for any reason) is right at the sentry,
       -- everything farther away waits
@@ -1181,17 +1185,29 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
       for _, c in ipairs(cands) do
         local id = c.id
         if c.visible and open(c) and not U[id] and not N[id] and not C[id] and not O[id] and not D[id]
-          and not B[id] and not SP[id] and not G[id] then
+          and not B[id] and not SP[id] and not G[id] and not RG[id] then
           if near_sentry(s, st, c) then close = close or {}; close[id] = true
-          elseif not close and c.pos and c.kind and c.d2 and c.d2 <= reach2 then
-            local k = armour_tier(c, heavy, def.air_first)
-            if not want or (heavy and k > want) or (not heavy and k < want) then want = k end
+          elseif not close and c.pos and c.d2 and c.d2 <= reach2 then
+            if near_first then
+              if not want or c.d2 < want then want = c.d2 end   -- (the closest one's distance, squared)
+            elseif c.kind then
+              local k = armour_tier(c, heavy, def.air_first)
+              if not want or (heavy and k > want) or (not heavy and k < want) then want = k end
+            end
           end
         end
       end
       if close then
         for _, c in ipairs(cands) do
           if c.pos and not close[c.id] and pickable(c, st) and not near_body(people, c.pos, near2) then Q = put(Q, c.id) end
+        end
+      elseif want and near_first then
+        local d = math.sqrt(want)
+        local lim2, keep2 = (d + PRIORITY.closer) ^ 2, (d + PRIORITY.closer_keep) ^ 2
+        for _, c in ipairs(cands) do
+          local id = c.id
+          if c.pos and c.d2 and c.d2 > (id == target and keep2 or lim2) and pickable(c, st) and not U[id] and not N[id]
+            and not near_body(people, c.pos, near2) then Q = put(Q, id) end
         end
       elseif want then
         for _, c in ipairs(cands) do
