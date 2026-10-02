@@ -281,9 +281,116 @@ local function locate()
   need(pi < 16384, 'perception index')
   need(rptr(rptr(perception + 72, 'perception owners') + pi * 8, 'perception owner') == drone_ptr, 'perception owner')
   local pbase = rptr(perception + 80, 'perception records') + pi * 5112
+  -- (4.5.3 Test 9) the dog's fire node: the part the game fires its weapon from (the muzzle), from the same weapon
+  -- records as the sentries' (optional). The laser starts there. Before, the barrel was guessed from the drone's parts,
+  -- and the guess could land on an aiming helper higher up on the drone (a tester's picture: the Guard Dog's beam
+  -- above its gun; the Rover's guess was dropped and its beam left the drone's front as before)
+  local fire_nodes, wr_addr, fire_unit, fire_how
+  -- (4.6.0 review: only while the laser is on - nothing else uses it)
+  if A.g.weapons and rawget(_G, 'SmarterGuardDogsLaser') == true then
+    pcall(function()
+      local wm = rptr(A.g.weapons, 'weapons')
+      local owners, runtimes = rptr(wm + 72, 'weapon owners'), rptr(wm + 88, 'weapon runtimes')
+      local function nodes_of(wi)
+        local addr = runtimes + wi * 1008
+        local wr = rd(addr, 228, 'weapon runtime')
+        local count = u32(wr, 216)
+        if count == 0 or count > 24 then return nil end
+        local l = {}
+        for j = 0, count - 1 do
+          local nj = u32(wr, 120 + 4 * j)
+          if nj < 1024 then l[j] = nj end
+        end
+        if next(l) then return l, addr end
+      end
+      local wi = map_lookup(wm + 48, drone_id, 32768)
+      if wi and wi < 16384 and rptr(owners + wi * 8, 'weapon owner') == drone_ptr then
+        fire_nodes, wr_addr = nodes_of(wi)
+        fire_unit, fire_how = drone_unit, 'the drone'
+        return
+      end
+      -- (4.5.3 Test 11) the dogs' guns have weapon records of their own (Test 10 log: none under the drone's id), so the
+      -- gun is looked for among all weapon records: the dog's own gun type (Guard Dog, Rover, K-9 from tester logs)
+      -- within 3 m of the drone, else a weapon of another type within 0.5 m of it and not on you. Up to 3 tries 5 s apart
+      -- per deployment; a gun found is kept while its record still belongs to the same owner
+      local F = dog.fire_found
+      if F and F.drone == drone_id and rptr(owners + F.wi * 8, 'weapon owner') == F.ptr then
+        fire_nodes, wr_addr = nodes_of(F.wi)
+        fire_unit, fire_how = F.unit, F.how
+        return
+      end
+      -- (4.6.0 review: the tries start again for each deployment - before, three failed tries for one drone stopped the
+      -- search for every later one in the session)
+      if dog.fire_scan_drone ~= drone_id then dog.fire_found, dog.fire_scans, dog.fire_scan_t, dog.fire_scan_drone = nil, 0, nil, drone_id end
+      if (dog.fire_scans or 0) >= 3 or (dog.fire_scan_t and os.clock() < dog.fire_scan_t) then return end
+      dog.fire_scan_t, dog.fire_scans = os.clock() + 5, (dog.fire_scans or 0) + 1
+      local D = unit_position(drone_unit)
+      if not D then return end
+      local ME = unit_position(player_unit)
+      local h = rd(wm + 48, 20, 'map header')
+      local cap, empty = u32(h, 8), u32(h, 12)
+      if cap == 0 or cap > 32768 or bit.band(cap, cap - 1) ~= 0 then return end
+      local raw = read(need(ptr_of(h, 0), 'map slots'), cap * 8)
+      if not raw then return end
+      local function hx(b) return (b:reverse():gsub('.', function(c) return string.format('%02x', c:byte()) end)) end
+      -- (4.6.0 review) the dog's own gun type first: only those records' positions are read. Every record's position
+      -- (enemies' weapons too) only when that finds nothing, or once per dog in test builds for their list
+      local full = TESTER and not dog.fire_scan_noted
+      local best, bd, seen
+      for pass = 1, 2 do
+        if pass == 2 and best and not full then break end
+        best, bd, seen = nil, 9, full and {} or nil
+        for i = 0, cap - 1 do
+          local key, v = u32(raw, 8 * i), u32(raw, 8 * i + 4)
+          if key ~= empty and v < 16384 then
+            local op = ptr_of(read(owners + v * 8, 8) or '', 0)
+            local oe = op and read(op, 24)
+            local kind = oe and oe:sub(1, 8)
+            local mine = dog.gun and kind == dog.gun
+            if oe and kind ~= AVATAR_TYPE and (pass == 2 or mine or not dog.gun) then
+              local unit = u32(oe, 12)
+              local p = unit_position(unit)
+              if p then
+                local d2 = (p[1] - D[1]) ^ 2 + (p[2] - D[2]) ^ 2 + (p[3] - D[3]) ^ 2
+                if d2 < 9 then
+                  if seen then seen[#seen + 1] = string.format('%s id %d unit %d at %.2f m', hx(kind), u32(oe, 8), unit, math.sqrt(d2)) end
+                  -- (your own weapons are 0.6-1.2 m from the drone when it leaves your back - a tester's logs; the dogs'
+                  -- guns 0.20-0.23 m: a weapon of another type only counts within 0.5 m and not within 0.6 m of you)
+                  local on_me = ME and (p[1] - ME[1]) ^ 2 + (p[2] - ME[2]) ^ 2 + (p[3] - ME[3]) ^ 2 < 0.36
+                  if mine or (not (best and best.mine) and d2 < bd and d2 < 0.25 and not on_me) then
+                    best, bd = { wi = v, unit = unit, id = u32(oe, 8), kind = hx(kind), ptr = op, mine = mine }, mine and -1 or d2
+                  end
+                end
+              end
+            end
+          end
+        end
+        if not dog.gun then break end   -- (a dog without a known gun type: the one full pass above)
+      end
+      if seen then
+        dog.fire_scan_noted = true
+        note('laser (test): weapon records within 3 m of the ' .. dog.name .. ': ' .. (#seen > 0 and table.concat(seen, '; ') or 'none'))
+      end
+      if best then
+        fire_nodes, wr_addr = nodes_of(best.wi)
+        fire_unit, fire_how = best.unit, string.format('its gun %s (id %d, unit %d)', best.kind, best.id, best.unit)
+        if fire_nodes then dog.fire_found = { drone = drone_id, wi = best.wi, ptr = best.ptr, unit = best.unit, how = fire_how } end
+      end
+    end)
+  end
+  if fire_nodes and dog.fire_noted ~= 'found' then
+    dog.fire_noted = 'found'
+    local l = {}
+    for j = 0, 23 do if fire_nodes[j] then l[#l + 1] = tostring(fire_nodes[j]) end end
+    note('laser: the ' .. dog.name .. ' fires from part ' .. table.concat(l, ', ') .. ' of ' .. (fire_how or '?') .. ' (its muzzle)')
+  elseif not fire_nodes and not dog.fire_noted then
+    dog.fire_noted = 'missing'
+    note('laser: the ' .. dog.name .. "'s weapon record was not found (yet); its barrel is learned from its parts")
+  end
   return {
     dog = dog, key = me:sub(1, 20) .. pack_id .. drone_ent:sub(1, 20), team_key = me:sub(1, 20), rec_addr = rec_addr, want = want_behaviour,
     drone_id = drone_id, drone_unit = drone_unit, player_unit = player_unit, tstate = tstates + slot_i * 208, owners = owners,
+    fire_nodes = fire_nodes, wr_addr = wr_addr, fire_unit = fire_nodes and fire_unit,
     pbase = pbase, registry = global('registry'), clock = rptr(g.clock, 'clock'),
   }
 end
@@ -393,12 +500,32 @@ local function read_state()
   local deadline = u64(rec, 152)
   need(deadline < 9007199254740991, 'deadline')
   local target = u32(rec, 24)
+  -- (the weapon's current fire node, only while the laser is on: one small read)
+  local fire_node
+  if ctx.wr_addr and rawget(_G, 'SmarterGuardDogsLaser') == true then
+    local w = read(ctx.wr_addr + 216, 8)
+    if w then
+      local count, index = u32(w, 0), u32(w, 4)
+      if index < count then fire_node = ctx.fire_nodes[index] end
+    end
+    fire_node = fire_node or ctx.fire_nodes[0]
+  end
+  -- (the gun's own pose array when its weapon belongs to another unit than the drone's)
+  local fire_pose
+  if fire_node and ctx.fire_unit and ctx.fire_unit ~= ctx.drone_unit then
+    local gp = unit_position(ctx.fire_unit)
+    fire_pose = gp and gp.pose
+    if not fire_pose then fire_node = nil end
+  end
   return {
     dog = dog, key = ctx.key,
     rec_addr = rec_addr, rec_head = rec:sub(1, 4), node = u32(rec, 8), target = target,
     synced = target ~= 0 and u32(tstate, 0) == target and rec:byte(121) == 1 and bit.band(u32(rec, 96), 1) ~= 0,
     candidates = candidates, now = now, deadline = deadline, perc = perc,
-    player_pos = unit_position(ctx.player_unit, true), drone_pos = drone_pos,
+    player_pos = unit_position(ctx.player_unit, true), drone_pos = drone_pos, fire_node = fire_node, fire_pose = fire_pose,
+    -- (4.5.3 Test 12) where the game aims the dog's gun (its targeting state; already read): the laser's fallback
+    -- points there, and test builds check the beam against it (only built with a fire node: nothing else uses it)
+    aim = fire_node and target ~= 0 and u32(tstate, 0) == target and { f32(tstate, 20), f32(tstate, 24), f32(tstate, 28) } or nil,
     mates = team_wanted() and teammates(ctx, t) or {}, mates_found = team_state and team.found or 0,
   }
 end

@@ -48,7 +48,7 @@ end
 -- the look-ahead only kicks in for genuinely fast turns (about 85+ degrees a second): during ordinary movement
 -- the dog repositions a lot, and checking its whole path then flagged enemies that were never in the way
 local MOTION = { steady_turn = 0.6, steady_move = 1.5, fast_turn = 1.5, fast_keep = 0.6, spin_min = 1.5,
-  lookahead = { 0.12 }, arc = { 0.25, 0.5, 0.75, 1.0 } }
+  lookahead = { 0.12 }, arc = { 0.25, 0.5, 0.75, 1.0 }, ahead_after = 0.5, arc_max = 1.0 }
 local M = {}
 local TAU = 2 * math.pi
 local function wrap(a) a = (a + math.pi) % TAU; return a - math.pi end
@@ -74,6 +74,13 @@ local function dog_positions(st)
   end
   M.t, M.ang, M.yaw, M.o = t, ang, yaw, o
   local r0 = math.sqrt(o[1] * o[1] + o[2] * o[2])
+  -- (4.5.3 Test 9) a slow dog (Guard Dog, K-9) gets the look-ahead only for the last part of its line-up and while
+  -- it fires: early in its line-up it isn't about to shoot, and checked then it hid nearly every enemy whenever you
+  -- turned, each hide restarting its slow line-up (a tester's log: the Guard Dog fired 7% of the time it had a
+  -- target, every hold in its lining-up step). Left off for the whole line-up, it fired through you more in the
+  -- simulator (it starts firing while still swinging round). Its line from where it is now is always checked, and the
+  -- Rover, which fires as it turns, keeps the look-ahead throughout
+  local ahead = st.dog.fast or st.node ~= 6 or (st.lineup_acc or 0) >= (st.dog.ahead_after or MOTION.ahead_after)
   -- 1) the spot it is flying to, and the swing from here to there
   if P.axes then
     local ax = P.axes
@@ -84,7 +91,7 @@ local function dog_positions(st)
     if math.abs(M.turn) > MOTION.fast_turn then M.fast_until = t + (st.dog.safety_keep or MOTION.fast_keep) end
     local L = M.spot
     local size = L and math.sqrt(dot3(L, L)) or 0
-    if size > 1 and size < 10 and t < (M.fast_until or 0) then
+    if ahead and size > 1 and size < 10 and t < (M.fast_until or 0) then
       local S = { P[1] + ax[1][1] * L[1] + ax[2][1] * L[2] + ax[3][1] * L[3],
                   P[2] + ax[1][2] * L[1] + ax[2][2] * L[2] + ax[3][2] * L[3],
                   P[3] + ax[1][3] * L[1] + ax[2][3] * L[2] + ax[3][3] * L[3] }
@@ -93,15 +100,21 @@ local function dog_positions(st)
         local so = sub3(S, P)
         local a1, r1 = heading(so), math.sqrt(so[1] * so[1] + so[2] * so[2])
         local da = wrap(a1 - ang)
+        -- (4.5.3 Test 15) only the first arc_max radians (about 57 degrees) of its swing around you: 0.7 let it fire through
+        -- you on a 180-degree flick in the simulator (2-3 frames), 1.0 doesn't:
+        -- the whole way round to its spot took in points well behind you, from where an enemy straight ahead lined up
+        -- through you - a tester's Guard Dog held fire on an enemy in front of them while it was on their right
+        local fmax = math.abs(da) > MOTION.arc_max and MOTION.arc_max / math.abs(da) or 1
         for _, f in ipairs(MOTION.arc) do
-          out[#out + 1] = around(P, ang + da * f, r0 + (r1 - r0) * f, o[3] + (so[3] - o[3]) * f)
+          local g = f * fmax
+          out[#out + 1] = around(P, ang + da * g, r0 + (r1 - r0) * g, o[3] + (so[3] - o[3]) * g)
         end
-        out[#out + 1] = { (D[1] + S[1]) / 2, (D[2] + S[2]) / 2, (D[3] + S[3]) / 2 }   -- in case it cuts straight across
+        if fmax == 1 then out[#out + 1] = { (D[1] + S[1]) / 2, (D[2] + S[2]) / 2, (D[3] + S[3]) / 2 } end   -- in case it cuts straight across
       end
     end
   end
   -- 2) wherever its current swing carries it next
-  if math.abs(M.spin) > MOTION.spin_min then
+  if ahead and math.abs(M.spin) > MOTION.spin_min then
     for _, dt2 in ipairs(MOTION.lookahead) do
       local turn = math.max(-math.pi, math.min(math.pi, M.spin * dt2))
       out[#out + 1] = around(P, ang + turn, r0, o[3])
@@ -170,6 +183,7 @@ local function unsafe_enemies(st)
               end
             end
             if closest < radius then
+              if TESTER and i > 1 and not why then st.unsafe_from = st.unsafe_from or {}; st.unsafe_from[c.id] = D end
               why = why or (i == 1 and (b.mate and 'a teammate is in its line of fire' or 'you are in its line of fire')
                 or (b.mate and 'a teammate would be in its line after the turn' or 'you would be in its line after the turn'))
               break
@@ -777,6 +791,17 @@ local function note_action(st, req)
   end
   local gap = st.safe_gap and st.safe_gap[st.target]
   if gap and gap < 50 then where = where .. string.format(', line %.2f m from a body', math.max(gap, 0)) end
+  -- (4.5.3 Test 15, test builds) for a look-ahead hold: where the dog was predicted to be, and where it was, in your
+  -- own frame (right/left, ahead/behind of you)
+  local F = TESTER and st.unsafe_from and st.unsafe_from[st.target]
+  if F and me and me.axes and st.drone_pos then
+    local function at(p)
+      local d = { p[1] - me[1], p[2] - me[2], p[3] - me[3] }
+      local r, f = d[1] * me.axes[1][1] + d[2] * me.axes[1][2] + d[3] * me.axes[1][3], d[1] * me.axes[2][1] + d[2] * me.axes[2][2] + d[3] * me.axes[2][3]
+      return string.format('%.1f m %s, %.1f m %s', math.abs(r), r >= 0 and 'right' or 'left', math.abs(f), f >= 0 and 'ahead' or 'behind')
+    end
+    where = where .. ', predicted dog ' .. at(F) .. ' (now ' .. at(st.drone_pos) .. ')'
+  end
   event(string.format('%s%s: %s (target %d, %s%s; AI step %d; %d enemies seen, %d hidden)', READ_ONLY and 'would ' or '', req.reason,
     st.dog.name, st.target, st.unsafe_why and st.unsafe_why[st.target] or '?', where, st.node, #st.candidates, unsafe))
 end

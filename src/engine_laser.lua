@@ -356,7 +356,15 @@ do
     local BR = laser.brightness()
     local function tri(p0, p1, p2, a)
       local c = colours[a]
-      if not c then c = SR.Color(math.min(255, math.floor(a[1] * BR + 0.5)), a[2], a[3], a[4]); colours[a] = c end
+      if not c then
+        -- (4.5.3 Test 11) brightness on the glow: its transparency alone hardly showed (a tester: the setting didn't
+        -- change it - the core is nearly solid already), so dimmer also darkens its colour and brighter whitens it
+        -- toward its hottest; the strips are widened too (WIDTH below)
+        local r, gg, bb = a[2], a[3], a[4]
+        if BR < 1 then r, gg, bb = r * BR, gg * BR, bb * BR
+        elseif BR > 1 then local w = math.min(0.6, (BR - 1) * 0.4); r, gg, bb = r + (255 - r) * w, gg + (255 - gg) * w, bb + (255 - bb) * w end
+        c = SR.Color(math.min(255, math.floor(a[1] * BR + 0.5)), math.floor(r + 0.5), math.floor(gg + 0.5), math.floor(bb + 0.5)); colours[a] = c
+      end
       local id
       if layered then id = tri_fn(g, p0, p1, p2, 1, c)
       elseif layered == false then id = tri_fn(g, p0, p1, p2, c)
@@ -382,7 +390,7 @@ do
         dx, dy, dz = dx / len, dy / len, dz / len
         local ux, uy, uz, vx, vy, vz = perp(dx, dy, dz)
         for _, part in ipairs(PARTS) do
-          local wd, steps = WIDTH[part], S[part]
+          local wd, steps = WIDTH[part] * (BR > 1 and 1 + (BR - 1) * 0.5 or 1), S[part]
           for pass = 1, 2 do   -- a strip lying level, then one standing up
             local ax, ay, az = ux * wd, uy * wd, uz * wd
             if pass == 2 then ax, ay, az = vx * wd, vy * wd, vz * wd end
@@ -439,7 +447,10 @@ end
 -- average); keep_cos: below this, while firing at an enemy in plain view, the part is dropped and the search
 -- starts again; off: the laser end may sit at most this far (metres, or this share of the distance) from the
 -- enemy, otherwise it falls back to pointing straight at it
-local GUN = { nodes = 40, reach = 2.5, frames = 24, min_cos = 0.997, keep_cos = 0.985, min_range = 8, off = 1.5, off_share = 0.06 }
+local GUN = { nodes = 40, reach = 2.5, frames = 24, min_cos = 0.997, keep_cos = 0.985, min_range = 8, off = 1.5, off_share = 0.06,
+  fire_cos = 0.95, fire_keep = 0.9, tries = 6 }
+-- (4.5.3 Test 9) fire_cos / fire_keep: on the game's own fire node (the muzzle) only its three axes are tried, so a
+-- barrel that lags its aim a little still counts; the wrong axes point well away
 local gun = {}     -- per dog name: { sums = {}, n = 0, node, axis, sign, tries }
 
 local function parse_node(m, o, root)
@@ -493,7 +504,7 @@ local function gun_learn(g, nodes, aim)
     return
   end
   local mean = best / g.n
-  if mean >= GUN.min_cos then
+  if mean >= (g.fire and GUN.fire_cos or GUN.min_cos) then
     g.node, g.axis, g.sign = math.floor(bk / 6), math.floor((bk % 6) / 2) + 1, bk % 2 == 0 and 1 or -1
     note(string.format('laser: barrel found for %s (part %d, axis %d%s, match %.3f)', g.name, g.node, g.axis, g.sign > 0 and '+' or '-', mean))
     event('laser: following the barrel of the ' .. g.name)
@@ -503,21 +514,55 @@ local function gun_learn(g, nodes, aim)
   g.sums, g.n = {}, 0
 end
 
--- the point the barrel is aimed at, level with the enemy (nil if unknown)
+-- (4.5.3 Test 12) from the muzzle toward the game's own aim point when it is near the enemy (as far as the enemy),
+-- else straight at the enemy: the Rover's and K-9's beam, and anyone's until its barrel axis is known. (On the laser
+-- table, built once: 4.6.0 review)
+laser.straight = function(st, to, from)
+  local A = st.aim
+  if A and A[1] == A[1] and (A[1] - to[1]) ^ 2 + (A[2] - to[2]) ^ 2 + (A[3] - to[3]) ^ 2 < 9 then
+    local ax, ay, az = A[1] - from[1], A[2] - from[2], A[3] - from[3]
+    local al = math.sqrt(ax * ax + ay * ay + az * az)
+    local tl = math.sqrt((to[1] - from[1]) ^ 2 + (to[2] - from[2]) ^ 2 + (to[3] - from[3]) ^ 2)
+    if al > 0.5 then return { from[1] + ax / al * tl, from[2] + ay / al * tl, from[3] + az / al * tl }, from, true end
+  end
+  return to, from, true
+end
+
+-- the point the barrel is aimed at, level with the enemy (nil if unknown); also where the beam starts and whether
+-- its end is on the enemy (for the cross)
 local function gun_point(st, to, learn)
   local D = st.drone_pos
   if not (D and D.pose) then return nil end
   local g = gun[st.dog.name]
   if not g then g = { name = st.dog.name, sums = {}, n = 0 }; gun[st.dog.name] = g end
-  if not g.node and (g.tries or 0) >= 6 then return nil end
-  local nodes = read_nodes(D.pose, D, g.node)
-  if not nodes then return nil end
-  if not g.node then
-    if learn then gun_learn(g, nodes, to) end
-    return nil
+  -- (4.5.3 Test 9) the game's own fire node (the muzzle) when its weapon record was found: the beam starts there,
+  -- along the barrel once its axis is known and straight at the enemy until then. Otherwise the barrel part is
+  -- guessed from all the drone's parts, as before
+  local fn = st.fire_node
+  if fn ~= g.fire then g.fire, g.node, g.sums, g.n, g.tries, g.check, g.check_n = fn, nil, {}, 0, 0, 0, 0 end
+  local nd
+  local straight = laser.straight
+  if fn then
+    local nodes = read_nodes(st.fire_pose or D.pose, D, fn)
+    nd = nodes and nodes[fn]
+    if not nd then return nil end
+    -- (4.5.3 Test 17) a dog whose muzzle part doesn't hold its barrel's direction (the Rover): muzzle to the aim point
+    if st.dog.beam_to_aim then return straight(st, to, nd.pos) end
+    if not g.node then
+      if learn and (g.tries or 0) < GUN.tries then gun_learn(g, nodes, to) end
+      if g.node ~= fn then g.node = nil; return straight(st, to, nd.pos) end
+    end
+  else
+    if not g.node and (g.tries or 0) >= GUN.tries then return nil end
+    local nodes = read_nodes(D.pose, D, g.node)
+    if not nodes then return nil end
+    if not g.node then
+      if learn then gun_learn(g, nodes, to) end
+      return nil
+    end
+    nd = nodes[g.node]
+    if not nd then return nil end
   end
-  local nd = nodes[g.node]
-  if not nd then return nil end
   local a = nd.axes[g.axis]
   local dir = { a[1] * g.sign, a[2] * g.sign, a[3] * g.sign }
   local v = { to[1] - nd.pos[1], to[2] - nd.pos[2], to[3] - nd.pos[3] }
@@ -530,14 +575,18 @@ local function gun_point(st, to, learn)
     if g.check_n >= GUN.frames then
       local mean = g.check / g.check_n
       g.check, g.check_n = 0, 0
-      if mean < GUN.keep_cos then
+      if mean < (g.fire and GUN.fire_keep or GUN.keep_cos) then
         note(string.format('laser: part %d of the %s stopped matching its aim (%.3f), looking again', g.node, g.name, mean))
         g.node = nil
+        if g.fire then return straight(st, to, nd.pos) end
         return nil
       end
     end
   end
-  if s < 1 then return nil end
+  if s < 1 then
+    if g.fire then return straight(st, to, nd.pos) end
+    return nil
+  end
   -- (4.5.3, a tester's call: the laser comes out of the barrel and runs along it, as far as the enemy, wherever the
   -- barrel points; before, it fell back to pointing at the enemy when the barrel was off. Also returned: where the
   -- beam starts (the barrel part) and whether its end is on the enemy, for the cross)
@@ -592,10 +641,19 @@ local function laser_frame(st, beams, safety_t, safety_enemy, safety_step, cover
     -- tried flashing green: it blended in with the firing beam, a tester's call)
     local e = by_id(cover_enemy)
     local on = math.floor((t - cover_t) * FLASH_HZ * 2) % 2 == 0
-    if e and e.pos and on and st.node ~= FIRE_STEP then beam({ e.pos[1], e.pos[2], e.pos[3] + (st.dog.aim_rise or AIM_RISE) }, YELLOW) end
+    -- (4.5.3 Test 9: these leave the barrel too)
+    if e and e.pos and on and st.node ~= FIRE_STEP then
+      local to = { e.pos[1], e.pos[2], e.pos[3] + (st.dog.aim_rise or AIM_RISE) }
+      local gp, gfrom = gun_point(st, to, false)
+      beam(gp or to, YELLOW, gp and gfrom)
+    end
     if st.target ~= 0 and st.node == FIRE_STEP then
       local e2 = by_id(st.target)
-      if e2 and e2.pos then beam({ e2.pos[1], e2.pos[2], e2.pos[3] + (st.dog.aim_rise or AIM_RISE) }, GREEN) end
+      if e2 and e2.pos then
+        local to = { e2.pos[1], e2.pos[2], e2.pos[3] + (st.dog.aim_rise or AIM_RISE) }
+        local gp, gfrom, gon = gun_point(st, to, false)
+        beam(gp or to, GREEN, gp and gfrom, gon)
+      end
     end
   elseif st.target ~= 0 and st.node == FIRE_STEP then   -- green only while it is actually firing
     local e = by_id(st.target)
@@ -604,6 +662,30 @@ local function laser_frame(st, beams, safety_t, safety_enemy, safety_step, cover
       local far = e.d2 and e.d2 > GUN.min_range ^ 2
       local gp, gfrom, gon = gun_point(st, to, e.visible and far)
       laser.last_gun, laser.last_to = gp, to     -- (the research log compares the two)
+      -- (4.5.3 Test 12, test builds) how far the beam points from where the game aims the gun (its targeting state's
+      -- aim point): the angle between the two from the muzzle, and how far apart they pass at the aim point. Logged
+      -- every 40 samples, up to 8 times a session
+      local A = st.aim
+      if TESTER and gp and gfrom and A and A[1] == A[1] then
+        local bx, by, bz = gp[1] - gfrom[1], gp[2] - gfrom[2], gp[3] - gfrom[3]
+        local ax, ay, az = A[1] - gfrom[1], A[2] - gfrom[2], A[3] - gfrom[3]
+        local bl, al = math.sqrt(bx * bx + by * by + bz * bz), math.sqrt(ax * ax + ay * ay + az * az)
+        if bl > 1 and al > 1 and al < 200 then
+          local cos = math.max(-1, math.min(1, (bx * ax + by * ay + bz * az) / (bl * al)))
+          local deg = math.deg(math.acos(cos))
+          -- (per dog: 4.5.3 Test 18 - one dog used up the eight lines in a tester's Test 17 log)
+          laser.align = laser.align or {}
+          local L = laser.align[st.dog.name] or { n = 0, sum = 0, max = 0, gap = 0, logged = 0 }
+          laser.align[st.dog.name] = L
+          L.n, L.sum, L.max, L.gap = L.n + 1, L.sum + deg, math.max(L.max, deg), L.gap + al * math.sin(math.rad(deg))
+          if L.n >= 40 and L.logged < 8 then
+            L.logged = L.logged + 1
+            event(string.format('laser alignment (test): %s beam vs the game\'s aim: %.2f degrees on average (most %.2f), %.2f m apart at the aim point, over %d samples',
+              st.dog.name, L.sum / L.n, L.max, L.gap / L.n, L.n))
+            L.n, L.sum, L.max, L.gap = 0, 0, 0, 0
+          end
+        end
+      end
       beam(gp or to, GREEN, gp and gfrom, gon)
     end
   end
