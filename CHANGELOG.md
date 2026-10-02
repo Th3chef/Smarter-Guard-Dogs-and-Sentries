@@ -1,5 +1,9 @@
 # Changelog
 
+## 4.6.1
+
+The Flame Sentry now engages enemies out to 30 m (was 20 m), goes for the closest enemies first and deals with one right at it before anything else, instead of the game's pick of far-off enemies while others close in.
+
 ## 4.6.0
 
 New: Bingus' Mod Options Menu support - every option in game under ESC > MODS, laid out as in the mod manager - and a Laser Brightness option, for the line and the glow. The targeting laser now comes out of the muzzle of every sentry and guard dog: along the barrel, and for the Rover and K-9 straight to where they aim. Sentries stop firing the moment their last enemy dies or is lost (the game kept them, the Supply FRV gun most of all, shooting at where it was for about a second), the same after a safety stop, and no longer pick the body again. The Rocket Sentry no longer stands idle while an enemy is inside its minimum range. The Guard Dog holds fire far less often when you turn quickly (it fired about four times as often in testing). A Tesla Tower the mod lets go of is now put back properly.
