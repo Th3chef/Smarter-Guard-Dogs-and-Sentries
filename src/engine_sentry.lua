@@ -113,6 +113,7 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
   local refound_notes = 0
   local not_steered = {}             -- id -> the reason last logged for a sentry that couldn't be steered
   local other_teslas = {}            -- another player's Tesla Towers already noted (4.5)
+  local other_noted = {}             -- (test builds) sentries not run by this game already noted (4.5.3 Test 13)
   -- (4.5.3: declared here, defined further down - forget() calls it; before, it called an undefined global and a Tesla
   -- Tower the mod let go of kept its rewritten target list: switching it off mid-mission left it picking nothing new)
   local tesla_unfilter
@@ -428,6 +429,20 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
             end
           else
             others = others + 1
+            -- (4.5.3 Test 13, test builds) what such a sentry is: a tester saw two in a solo game (Test 11 log), so
+            -- either something in the mission uses a sentry's type or a sentry of yours was not taken as yours.
+            -- Noted once each (up to 10): its kind, id, unit, the flag byte the mod reads and its AI
+            if TESTER then
+              local id = u32(e, 8)
+              local N = other_noted
+              if not N[id] and (N.count or 0) < 10 then
+                N[id], N.count = true, (N.count or 0) + 1
+                local bi = map_lookup(behaviours + 64, id, 32768)
+                local ai = bi and bi < 16384 and read(rptr(behaviours + 96, 'behaviour records') + bi * A.stride, 4)
+                event(string.format('sentry (test): a %s not run by this game (id %d, unit %d, flag byte %d, AI %s)', def.name, id, u32(e, 12), e:byte(21),
+                  ai and tostring(u32(ai, 0)) or 'none'))
+              end
+            end
             -- (4.5) another player's Tesla Tower: their game runs it, so this mod can't keep it off helldivers - noted
             -- once each, so a zap from one can be told apart from one by yours
             if def.spares_helldivers then
@@ -880,8 +895,12 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
     end
     return false
   end
+  -- (4.5.3 Test 10) not one inside its minimum range (the Rocket Sentry's 10 m, wider than SELF.reach): it can't shoot
+  -- that one, and treating it as the first to deal with left every enemy farther out hidden while it stood there
   local function near_sentry(s, st, c)
-    return not s.def.blast and c.pos and (c.pos[1] - st.base[1]) ^ 2 + (c.pos[2] - st.base[2]) ^ 2 + (c.pos[3] - st.base[3]) ^ 2 < SELF.reach ^ 2
+    if s.def.blast or not c.pos then return false end
+    local d2 = (c.pos[1] - st.base[1]) ^ 2 + (c.pos[2] - st.base[2]) ^ 2 + (c.pos[3] - st.base[3]) ^ 2
+    return d2 < SELF.reach ^ 2 and not (s.def.min_range and d2 < s.def.min_range ^ 2)
   end
   -- (test builds) other entries within 3 m of an enemy the sentry kept: parts or a pilot the game may be choosing it
   -- through (a Scout Strider was chosen again and again while hidden)
@@ -946,58 +965,6 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
   end
   -- (also, 'ask trace (test)': the same after the mod asks it to drop a target - safety, cover, armor, cooling... -
   -- with nothing else it may pick, first 10 per sentry kind: does it keep firing at nothing for a second?)
-  -- (4.5.3 Test 3) 'record trace': after the game clears a sentry's target while it is in its firing step (it keeps
-  -- firing at nothing for about a second, a tester's logs), its AI record (512 bytes), weapon record (1008) and
-  -- targeting state (208) are read at 0 to 1.25 s and every 4-byte field that changes is written to
-  -- SmarterGuardDogsAndSentries-records.log, times as seconds from now: to find what holds it in its firing step.
-  -- The first 4 per session; reads only
-  local RTRACE = { 0, 0.1, 0.2, 0.35, 0.5, 0.65, 0.8, 0.95, 1.1, 1.25 }
-  local rtrace_n = 0
-  local function rtrace_snap(s, R)
-    local now = u64(rd(rptr(A.g.clock, 'clock') + 24, 8, 'clock'), 0)
-    R.snaps[#R.snaps + 1] = { now = now, rec = read(s.rec_addr, 512), wr = s.wr_addr and read(s.wr_addr, 1008), ts = read(s.tstate, 208),
-      node = (read(s.rec_addr + 8, 4) or '\0\0\0\0') }
-  end
-  local function rtrace_write(s, R)
-    if not LOGDIR then return end
-    local f = io.open(LOGDIR .. '\\SmarterGuardDogsAndSentries-records.log', rtrace_n == 1 and 'w' or 'a')
-    if not f then return end
-    f:write(string.format('== %s, target %d cleared in its firing step (%s); snapshots at %s s\n', s.def.name, R.id, R.why,
-      table.concat(RTRACE, ' ', 1, #R.snaps)))
-    local S = R.snaps
-    f:write('  AI step: ')
-    for _, x in ipairs(S) do f:write(u32(x.node, 0), ' ') end
-    f:write('\n')
-    for _, reg in ipairs({ { 'rec', 512 }, { 'wr', 1008 }, { 'ts', 208 } }) do
-      local name, len = reg[1], reg[2]
-      local lines, skip = 0, {}
-      for off = 0, len - 4, 4 do
-        local first, diff = S[1][name] and S[1][name]:sub(off + 1, off + 4), false
-        if skip[off] then diff = nil end
-        if diff ~= nil then for _, x in ipairs(S) do if not x[name] or x[name]:sub(off + 1, off + 4) ~= first then diff = true; break end end end
-        if diff and lines < 40 then
-          lines = lines + 1
-          local vals = {}
-          for _, x in ipairs(S) do
-            local b = x[name]
-            if not b then vals[#vals + 1] = '-'
-            else
-              local v = u32(b, off)
-              -- a u64 time (this field and the next one) shown as seconds from that snapshot's clock
-              local tv = off % 8 == 0 and off + 8 <= len and x.now > 1e9 and u64(b, off)
-              if tv and tv > x.now - 30e6 and tv < x.now + 30e6 then vals[#vals + 1] = string.format('T%+.2f', (tv - x.now) / 1e6); skip[off + 4] = true
-              else
-                local fv = f32(b, off)
-                vals[#vals + 1] = (v > 0x10000 and fv == fv and math.abs(fv) > 1e-3 and math.abs(fv) < 1e6) and string.format('%.3g', fv) or tostring(v)
-              end
-            end
-          end
-          f:write(string.format('  %s +%-4d %s\n', name, off, table.concat(vals, ' ')))
-        end
-      end
-    end
-    f:close()
-  end
   local function kill_trace_start(s, st, t, why, label)
     label = label or 'kill trace'
     local k = s.def.name .. '/' .. label
@@ -1006,17 +973,8 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
     local id = st.target ~= 0 and st.target or (s.P.lost_from or 0)
     local c = st.current
     s.P.ktrace = { id = id, t0 = t, why = why, label = label, kind = (st.target ~= 0 and c and c.kind) or s.P.prev_kind, parts = {}, last = nil }
-    if why == 'target cleared by the game' and st.node == (s.def.fire_node or FIRE_NODE) and rtrace_n < 4 and not s.P.rtrace then
-      rtrace_n = rtrace_n + 1
-      s.P.rtrace = { t0 = t, id = id, why = why, snaps = {} }
-    end
   end
   local function kill_trace_step(s, st, t)
-    local R = s.P.rtrace
-    if R then
-      if #R.snaps < #RTRACE and t - R.t0 >= RTRACE[#R.snaps + 1] then pcall(rtrace_snap, s, R) end
-      if #R.snaps >= #RTRACE or t - R.t0 > RTRACE[#RTRACE] + 0.5 then s.P.rtrace = nil; pcall(rtrace_write, s, R) end
-    end
     local K = s.P.ktrace
     if not K then return end
     local ok, now = pcall(ktrace_state, st, K.id)
@@ -1313,6 +1271,16 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
       P.lost_t, P.lost_tries = t, 0
       P.dead[target] = t + DEAD_HIDE
       if TESTER then kill_trace_start(s, st, t, again and 'back on the dead target' or 'target died') end
+      -- (4.5.3 Test 10) asked to choose with nothing else it may pick, the game picks the same dead target again and
+      -- gives it a fresh timer: a tester's Rocket Sentry fired a salvo at a body for ~1.5 s after such an ask, its
+      -- target no longer in its list. Then it is only hidden: the game clears the target itself at its next look, and
+      -- the release below lets go of its aim at once (as for a target the game cleared, 4.5.1)
+      local any = false
+      for _, c in ipairs(cands) do if c.id ~= target and open(c) and not hide[c.id] then any = true; break end end
+      if not any then
+        bump(session.actions, 'sentry_dead_target_hidden')
+        return { block = union(hide, { [target] = true }), kick = false, reason = 'sentry_target_lost', quiet = true }
+      end
       local r = kick(s, st, t, union(hide, { [target] = true }), { [target] = true }, 'sentry_target_lost')
       if r.kick then r.quiet = true; bump(session.actions, again and 'sentry_target_lost_again' or 'sentry_target_lost') end
       return r
@@ -1472,7 +1440,7 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
       if next(sentries) then sentry_restore() end
       pl = nil
       noted_events = 0   -- (up to 40 sentry events are logged per mission)
-      other_teslas = {}
+      other_teslas, other_noted = {}, {}
       if seaf_research then seaf_research.reset() end
       return false
     end

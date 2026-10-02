@@ -302,14 +302,21 @@ for h, n in pairs({
 }) do LABELS[type_hash(h)] = n end
 local DOGS = {
   { name = 'Rover', pack = type_hash('af9b683ccb6ddc02'), drone = type_hash('5beec97f4c7f4ae9'), laser = true,
-    fast = true, radius = 0.35, safety_keep = 0.4, linger = 0.3, range = 35 },   -- (4.5.3: its laser comes out of its barrel too, a tester's call)
+    fast = true, radius = 0.35, safety_keep = 0.4, linger = 0.3, range = 35,
+    gun = type_hash('2c66c201b2543d2c'), beam_to_aim = true },   -- (4.5.3: its laser comes out of its barrel too, a tester's call)
+    -- (4.5.3 Test 17: gun = its weapon's own entity, from a tester's Test 15 log; beam_to_aim: its muzzle part twists as
+    -- it sweeps its beam over what it burns - the barrel axis was found and lost four times and the beam ran up to 19
+    -- degrees off the game's aim - so its laser runs from its muzzle to where the game aims it)
     -- (its beam is thin, so its safety margin, look-ahead after a fast turn and hide time are a little shorter;
     -- beyond ~35 m it often lines up without firing, so farther enemies wait while something closer is available:
     -- it is a guard dog, the enemies near you come first)
   { name = 'K-9', pack = type_hash('c28da712b12e3dfa'), drone = type_hash('4b071633584e4594'), laser = true,
-    fast = false, radius = 0.6, chain = 3.0, aim_rise = 1.0 },   -- (4.5.3: out of its barrel too; its arc weapon sways, and so does the laser)
+    fast = false, radius = 0.6, chain = 3.0, aim_rise = 1.0, gun = type_hash('a0532c3616528cbf'), beam_to_aim = true },   -- (gun: 4.5.3 Test 15 log)
+    -- (4.5.3 Test 18: beam_to_aim like the Rover's - its arc weapon's muzzle part lost its barrel direction twice in a
+    -- tester's Test 17 log (0.697, 0.883) and the laser twitched at times)   -- (4.5.3: out of its barrel too; its arc weapon sways, and so does the laser)
   { name = 'Guard Dog', pack = type_hash('255ebc5767d7ceec'), drone = type_hash('a0ff2f9a0ca6992a'), laser = false,
-    fast = false, radius = 0.35, safety_keep = 0.4, linger = 0.3, range = 32, hard_range = true, aim_rise = 1.2 },   -- it only ever opens fire within ~32 m (measured from test logs)
+    fast = false, radius = 0.35, safety_keep = 0.4, linger = 0.3, range = 32, hard_range = true, aim_rise = 1.2,
+    gun = type_hash('a32621e3bde13379') },   -- it only ever opens fire within ~32 m (measured from test logs); gun: its weapon's own entity (4.5.3 Test 11 log)
     -- (safety trimmed like the Rover's: slightly smaller margin, shorter look-ahead after a fast turn and hide time;
     -- hard_range: it never fires beyond ~32 m, so enemies farther out stay hidden even when nothing is closer)
 }
@@ -338,7 +345,7 @@ for _, d in ipairs(DOGS) do DOG_BY_PACK[d.pack] = d end
 --  bursts: short bursts at Heavy Devastators, like the Guard Dog (machine gun, Gatling)
 --  air_first: gunships and Stingrays before everything else (Gatling, autocannon, rocket, Laser); air_still: only while the gunship hovers (rocket)
 --  laser_at_enemy: no barrel axis to follow (rocket, autocannon): the laser runs from the muzzle to where the game aims
---  the gun. Every other sentry's laser comes out along its barrel (4.5.3; laser_follows_barrel is no longer needed)
+--  the gun. Every other sentry's laser comes out along its barrel (4.5.3)
 -- The log says when a sentry-like AI shows up with a type that isn't in this list.
 local SENTRIES = {
   { name = 'Machine Gun Sentry', type = type_hash('37cde43876ba26bb'), ai = 312, line = 0.45, spread = 0.01, sweep = true, barrel_axis = 2, pen = 3, bursts = true, prefer = 'light' },
@@ -349,7 +356,7 @@ local SENTRIES = {
   -- (heat: the wiki says it heats 8 degrees a second while firing, burns out at 250 and cools 3.8-7.5 a second; in game it
   -- overheated after about 28 s on targets, so the estimate uses 11 a second. The game's own heat meter is used when found)
   { name = 'Laser Sentry', type = type_hash('56070f36cfffa8a8'), ai = 308, line = 0.35, spread = 0.002, sweep = true, barrel_axis = 2, pen = 4, heat = { cap = 250, rate = 11, cool = 3.8 },
-    prefer = 'light', air_first = true, laser_follows_barrel = true, spreads_fire = true, fire_node = 13 },   -- (ours runs along its barrel, over its own beam, turning with it)
+    prefer = 'light', air_first = true, spreads_fire = true, fire_node = 13 },   -- (ours runs along its barrel, over its own beam, turning with it)
   { name = 'Flame Sentry', type = type_hash('820cc3bafe962858'), ai = 207, line = 1.0, spread = 0.03, splash = 2.5, sweep = true,
     range = 20 },   -- (4.5.2, a tester's call: the game lets it pick enemies well past its flames; 'range' = metres from its muzzle)
   -- (4.0) the Tesla Tower (hellpod/tesla_turret): its arc reaches 20 m and chains from its target to whoever stands

@@ -17,9 +17,10 @@ local menu_step = (function()
   local MOD = 'SMARTER GUARD DOGS & SENTRIES'
   local function flag(k) return rawget(_G, 'SmarterGuardDogs' .. k) == true end
   local function set(k, v) rawset(_G, 'SmarterGuardDogs' .. k, v == true) end
-  -- (Laser Brightness: the mod manager's sub-options, in their order; no 'Off' - without the option the laser is at its
+  -- (Laser Brightness: the mod manager's sub-options, dimmest to brightest here - a tester's call, 4.5.3 Test 14; the mod
+  -- manager lists Normal first because it preselects its first entry. No 'Off' - without the option the laser is at its
   -- normal brightness, the same as 'Normal (100%)')
-  local BRIGHT = { 1.0, 0.5, 0.75, 1.5, 2.0 }
+  local BRIGHT = { 0.5, 0.75, 1.0, 1.5, 2.0 }
   -- each row, in the mod manager's order: its choices, which flags each sets, and the starting choice from the flags
   local OPTS = {
     { key = 'dogs', label = 'Guard Dogs', type = 'toggle',
@@ -43,13 +44,13 @@ local menu_step = (function()
       apply = function(v) set('Laser', v ~= 1); set('Glow', v == 3) end,
       start = function() return not flag('Laser') and 1 or (flag('Glow') and 3 or 2) end },
     { key = 'laser_brightness', label = 'Laser Brightness', type = 'choice',
-      choices = { 'Normal (100%)', 'Dim (50%)', 'Softer (75%)', 'Bright (150%)', 'Brightest (200%)' },
+      choices = { 'Dim (50%)', 'Softer (75%)', 'Normal (100%)', 'Bright (150%)', 'Brightest (200%)' },
       description = 'How bright the targeting laser is: its beams and rings, line or glow.',
       apply = function(v) if BRIGHT[v] then rawset(_G, 'SmarterGuardDogsLaserBrightness', BRIGHT[v]) end end,
       start = function()
         local b = rawget(_G, 'SmarterGuardDogsLaserBrightness')
-        if type(b) ~= 'number' then return 1 end
-        local best, bd = 1, nil
+        if type(b) ~= 'number' then return 3 end
+        local best, bd = 3, nil
         for i, x in ipairs(BRIGHT) do if not bd or math.abs(x - b) < bd then best, bd = i, math.abs(x - b) end end
         return best
       end },
