@@ -32,7 +32,7 @@ def bright_source(v):
     return ('-- HD2-Addon: %s\n'
             '-- Smarter Guard Dogs & Sentries - Laser Brightness (optional part): the targeting laser at %d%%.\n'
             "rawset(_G, 'SmarterGuardDogsLaserBrightness', %s)\n" % (BRIGHT_MODULE, round(v * 100), repr(v))).encode('utf-8')
-VERSION = '4.6.1'
+VERSION = '4.6.2'
 NAME_SUFFIX = ''   # '' for releases, e.g. ' Test 3' for test builds
 ARCHIVE = '9ba626afa44a3aa3.patch_0'        # the game archive the shared loader reads addons from
 LUA_TYPE, MAGIC = 0xa14e8dfa2cd117e2, 0xF0000011
