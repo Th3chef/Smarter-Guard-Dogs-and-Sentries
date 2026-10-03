@@ -1,5 +1,9 @@
 # Changelog
 
+## 4.6.3
+
+The Guard Dog and K-9 get their burst off on a new target before switching to a closer enemy. The Bright and Brightest laser settings now look different (Brightest is whiter). A laser problem can no longer stop the dog and sentry handling, and after an error your sentries are put back to normal too. More reliable detection of your dog's gun when other dogs are nearby, and lighter on your PC over long sessions.
+
 ## 4.6.2
 
 The Supply FRV gun stops firing the moment its last enemy is gone (the game kept it shooting at the spot for a second), and it and the Armed Resupply Pod gun no longer spray while swinging round to an enemy far off to the side: they turn, then fire. The Flame Sentry switches to closer enemies sooner and moves on from burning enemies to the next unlit one, closer ones first, never leaving one next to you.
