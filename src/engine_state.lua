@@ -4,7 +4,11 @@
 -- ======================================================================================================
 local A   -- absolute layout, set at start-up
 
-local function is_local(entity) return bit.band(entity:byte(21), 3) == 1 end
+-- (4.6.3) the names other files use are declared here; the rest of this file sits in a do-block so its own
+-- helpers stop counting toward Lua's 200 locals of the main chunk once the file ends
+local is_local, unit_position, team, team_wanted, OPT, FRAME, teammates, team_detail, GROUPS, SINGLES, find_player, read_candidates, in_mission, read_state
+do
+function is_local(entity) return bit.band(entity:byte(21), 3) == 1 end
 
 -- world pose of a unit (position + rotation axes), from the engine's unit table in helldivers2.exe.
 -- The first lookup of a unit walks the table and checks it thoroughly; after that its object is remembered
@@ -31,7 +35,7 @@ local function unit_object(id)
   unit_cache[id] = obj
   return obj, h
 end
-local function unit_position(id, want_axes)
+function unit_position(id, want_axes)
   if not id or id == 0 then return nil end
   local ok, pos = pcall(function()
     local obj, h = unit_object(id)
@@ -63,7 +67,7 @@ end
 local OWNER_ROWS = 2048
 local TEAM_SCAN_SECONDS = 1.0
 local TEAM_MAX = 8
-local team = { units = {}, next_scan = 0, key = nil, last = {}, found = 0, rows = {}, moved = {}, players = '?' }
+team = { units = {}, next_scan = 0, key = nil, last = {}, found = 0, rows = {}, moved = {}, players = '?' }
 local function scan_teammates(owners, player_unit)
   local rows = read(owners + A.owner_rows, OWNER_ROWS * 24)
   local units = {}
@@ -91,7 +95,7 @@ end
 -- switched on by the optional 'Teammate safety' part of the mod (a tiny second addon that sets this flag); read
 -- every frame, so load order does not matter. While it is off, teammates are not looked up at all.
 local team_state
-local function team_wanted()
+function team_wanted()
   local on = rawget(_G, 'SmarterGuardDogsTeammates') == true
   if on ~= team_state then
     team_state = on; session.team.off = not on
@@ -102,7 +106,7 @@ end
 
 -- (4.0.1) the optional parts that choose what the mod handles: Safety (you), Guard Dogs and Sentries (each set by a
 -- tiny addon, like the laser's). Read every frame, so load order doesn't matter.
-local OPT = {}
+OPT = {}
 do
   local noted = {}
   local function flag(key, name, off_text)
@@ -122,15 +126,15 @@ end
 
 -- positions of the other players' helldivers (with a smoothed velocity, for a short look-ahead). Worked out once
 -- per frame: the dogs and the sentries share the result.
-local FRAME = 0   -- counts the mod's frames (the main loop adds one each tick)
-local function teammates(c, t)
+FRAME = 0   -- counts the mod's frames (the main loop adds one each tick)
+function teammates(c, t)
   if team.frame == FRAME and team.frame_key == c.team_key and team.frame_mates then return team.frame_mates end
   if t >= team.next_scan or team.key ~= c.team_key then
     team.units, team.found = scan_teammates(c.owners, c.player_unit)
     team.next_scan, team.key = t + TEAM_SCAN_SECONDS, c.team_key
-    local keep = {}
-    for _, u in ipairs(team.units) do keep[u] = team.last[u] end
-    team.last = keep
+    local keep, moved = {}, {}
+    for _, u in ipairs(team.units) do keep[u] = team.last[u]; moved[u] = team.moved[u] end
+    team.last, team.moved = keep, moved   -- (4.6.3 review: 'moved' was never pruned - every respawn added a unit)
   end
   local mates = {}
   for _, u in ipairs(team.units) do
@@ -163,7 +167,7 @@ local function teammates(c, t)
 end
 
 -- test builds: one line describing every teammate row found (for the log)
-local function team_detail(me)
+function team_detail(me)
   local out = { 'players ' .. tostring(team.players) }
   for _, r in ipairs(team.rows) do
     local last = team.last[r.unit]
@@ -176,15 +180,15 @@ local function team_detail(me)
 end
 
 -- (count offset, first entry, and the name the research log shows; singles: entry and name)
-local GROUPS = { { 784, 792, 'g1' }, { 2072, 2080, 'g2' }, { 3360, 3368, 'g3' } }
-local SINGLES = { { 4648, 's1' }, { 4728, 's2' }, { 4808, 's3' } }
+GROUPS = { { 784, 792, 'g1' }, { 2072, 2080, 'g2' }, { 3360, 3368, 'g3' } }
+SINGLES = { { 4648, 's1' }, { 4728, 's2' }, { 4808, 's3' } }
 
 -- The walk from the game's player table to our dog's AI and perception records takes ~30 reads. It is done
 -- four times a second (and at once if anything looks different); in between the addresses it found are
 -- reused and checked against the dog's own AI record every frame.
 local LOCATE_SECONDS = 0.25
 -- your helldiver: its owner row (id, unit) and the owner table itself (also used for teammates and sentries)
-local function find_player()
+function find_player()
   local g = A.g
   local function global(name) return rptr(g[name], name) end
   local players = global('players')
@@ -314,10 +318,15 @@ local function locate()
       -- within 3 m of the drone, else a weapon of another type within 0.5 m of it and not on you. Up to 3 tries 5 s apart
       -- per deployment; a gun found is kept while its record still belongs to the same owner
       local F = dog.fire_found
-      if F and F.drone == drone_id and rptr(owners + F.wi * 8, 'weapon owner') == F.ptr then
-        fire_nodes, wr_addr = nodes_of(F.wi)
-        fire_unit, fire_how = F.unit, F.how
-        return
+      -- (4.6.3 review: read without raising - an empty owner slot raised before, which skipped the search below for
+      -- the rest of the deployment)
+      if F and F.drone == drone_id then
+        if ptr_of(read(owners + F.wi * 8, 8), 0) == F.ptr then
+          fire_nodes, wr_addr = nodes_of(F.wi)
+          fire_unit, fire_how = F.unit, F.how
+          return
+        end
+        dog.fire_found = nil
       end
       -- (4.6.0 review: the tries start again for each deployment - before, three failed tries for one drone stopped the
       -- search for every later one in the session)
@@ -357,8 +366,10 @@ local function locate()
                   -- (your own weapons are 0.6-1.2 m from the drone when it leaves your back - a tester's logs; the dogs'
                   -- guns 0.20-0.23 m: a weapon of another type only counts within 0.5 m and not within 0.6 m of you)
                   local on_me = ME and (p[1] - ME[1]) ^ 2 + (p[2] - ME[2]) ^ 2 + (p[3] - ME[3]) ^ 2 < 0.36
-                  if mine or (not (best and best.mine) and d2 < bd and d2 < 0.25 and not on_me) then
-                    best, bd = { wi = v, unit = unit, id = u32(oe, 8), kind = hx(kind), ptr = op, mine = mine }, mine and -1 or d2
+                  -- (4.6.3 review: the closest of the dog's own gun type - before, the last one within 3 m won, which
+                  -- could be a teammate's dog launched next to yours)
+                  if (mine and not (best and best.mine and best.d2 <= d2)) or (not mine and not (best and best.mine) and d2 < bd and d2 < 0.25 and not on_me) then
+                    best, bd = { wi = v, unit = unit, id = u32(oe, 8), kind = hx(kind), ptr = op, mine = mine, d2 = d2 }, mine and -1 or d2
                   end
                 end
               end
@@ -401,7 +412,7 @@ local reg_frame, reg_seen = -1, {}   -- enemies already looked up this frame
 
 -- the enemies one AI agent (a dog or a sentry) is currently considering, from its perception record. 'origin' is
 -- where distances (d2) are measured from. Also returns the raw record, for the research log.
-local function read_candidates(pbase, origin, registry)
+function read_candidates(pbase, origin, registry)
   local perc = rd(pbase, 5112, 'perception record')
   local fcount = u32(perc, 0)
   need(fcount <= 32, 'faction filter')
@@ -467,22 +478,30 @@ local function read_candidates(pbase, origin, registry)
 end
 
 
-local function in_mission()
+function in_mission()
   local mission_ptr = ptr_of(read(A.g.mission, 8), 0)
   local mission = mission_ptr and read(mission_ptr, 68)
   return mission ~= nil and u32(mission, 8) ~= 0 and u32(mission, 64) ~= 0
 end
 
 -- returns a state table, or nil + a short reason. Game-structure surprises raise an Abort error.
-local function read_state()
-  if not in_mission() then ctx = nil; return nil, 'not in a mission' end
+local locate_fail_until, locate_fail_why = 0, nil
+function read_state()
+  if not in_mission() then
+    ctx = nil
+    if next(unit_cache) then unit_cache = {} end   -- (4.6.3 review: with no dog out it was never emptied)
+    return nil, 'not in a mission'
+  end
 
   local t = os.clock()
+  -- (4.6.3 review) after a failed look for your dog (none out, another backpack...) the next is LOCATE_SECONDS later:
+  -- while a sentry kept the polls going every frame, it was repeated every frame
+  if not ctx and t < locate_fail_until then return nil, locate_fail_why end
   local rec
   for attempt = 1, 2 do
     if not ctx or t >= ctx_until or attempt == 2 then
       local c, why = locate()
-      if not c then ctx = nil; return nil, why end
+      if not c then ctx = nil; locate_fail_until, locate_fail_why = t + LOCATE_SECONDS, why; return nil, why end
       ctx, ctx_until, unit_cache, reg_rows = c, t + LOCATE_SECONDS, {}, {}
     end
     rec = read(ctx.rec_addr, 160)
@@ -528,4 +547,5 @@ local function read_state()
     aim = fire_node and target ~= 0 and u32(tstate, 0) == target and { f32(tstate, 20), f32(tstate, 24), f32(tstate, 28) } or nil,
     mates = team_wanted() and teammates(ctx, t) or {}, mates_found = team_state and team.found or 0,
   }
+end
 end

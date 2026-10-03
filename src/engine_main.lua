@@ -83,6 +83,14 @@ local menu_step = (function()
   end
 end)()
 
+-- (4.6.3) this frame's laser: the dog's beam and the sentries' beams, drawn together (called in a pcall from tick)
+laser.step = function(st, sentries_out, t)
+  local beams = {}
+  if st then laser_frame(st, beams, P.safety_now and P.safety_t or nil, P.safety_enemy, P.safety_step, P.cover_t, P.cover_enemy, P.cover_step) end
+  if sentries_out then sentry_beams(beams, t) end
+  if #beams > 0 or beams.rings then laser_draw(beams) else laser_clear() end
+end
+
 local function tick()
   local t = os.clock()
   FRAME = FRAME + 1
@@ -109,7 +117,10 @@ local function tick()
     if type(e) == 'table' and e[1] == Abort then why = 'read_failed: ' .. tostring(e[2])
     else
       -- a bug in this mod rather than an unexpected game state: stop steering for the rest of the session
+      -- (4.6.3: the sentries too - they are no longer ticked once 'broken' is set, so their hidden enemies and a Tesla
+      -- Tower's target list are put back now, as the update wrapper below does)
       broken = true; why = 'stopped after error: ' .. tostring(e); restore()
+      sentry_broken = true; pcall(sentry_restore)
     end
     stats.read_errors = stats.read_errors + 1
     last_error = why
@@ -171,11 +182,10 @@ local function tick()
   -- (every frame while a sentry is busy; idle ones - no target, no enemy in their lists - ten times a second)
   if sentries_busy then next_poll = 0 end
   -- the laser: the dog's beam and the sentries' beams, drawn together
+  -- (4.6.3) in a pcall of its own: an error in the laser (it is only for show) stops the laser, not the steering
   if laser_wanted() and laser_ready() then
-    local beams = {}
-    if st then laser_frame(st, beams, P.safety_now and P.safety_t or nil, P.safety_enemy, P.safety_step, P.cover_t, P.cover_enemy, P.cover_step) end
-    if sentries_out then sentry_beams(beams, t) end
-    if #beams > 0 or beams.rings then laser_draw(beams) else laser_clear() end
+    local okl, errl = pcall(laser.step, st, sentries_out, t)
+    if not okl then laser_fail(errl) end
   else laser_clear() end
 end
 

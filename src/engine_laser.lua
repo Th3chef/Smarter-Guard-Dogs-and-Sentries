@@ -202,7 +202,19 @@ local function laser_draw(beams, redraw)
           local c = colours[a]
           if not c then
             if BR == 1 then c = SR.Color(a[1], a[2], a[3], a[4])
-            else c = SR.Color(a[1], math.min(255, math.floor(a[2] * BR + 0.5)), math.min(255, math.floor(a[3] * BR + 0.5)), math.min(255, math.floor(a[4] * BR + 0.5))) end
+            else
+              -- (4.6.3 review) past full strength a channel can't go brighter (the neon green's 200 reached 255 at about
+              -- 130%, so Bright and Brightest looked the same): what is left over whitens the colour instead, as the
+              -- glow does
+              local r, g, b = a[2] * BR, a[3] * BR, a[4] * BR
+              local m = math.max(r, g, b)
+              if m > 255 then
+                local w = math.min(0.6, (m - 255) / m)
+                r, g, b = math.min(255, r), math.min(255, g), math.min(255, b)
+                r, g, b = r + (255 - r) * w, g + (255 - g) * w, b + (255 - b) * w
+              end
+              c = SR.Color(a[1], math.floor(r + 0.5), math.floor(g + 0.5), math.floor(b + 0.5))
+            end
             colours[a] = c
           end
           return c
@@ -254,7 +266,8 @@ local function laser_draw(beams, redraw)
 end
 
 local function laser_clear()
-  if laser.state == 'ready' and next(laser.worlds) then laser_draw({}) end
+  -- (4.6.3 review: only when something is on screen - before, every poll with nothing to show redrew empty line objects)
+  if laser.state == 'ready' and laser.has and next(laser.worlds) then laser_draw({}) end
 end
 -- (4.0.6) on the frames the mod doesn't look at the game (idle sentries, a few checks a second): the laser as it was
 do

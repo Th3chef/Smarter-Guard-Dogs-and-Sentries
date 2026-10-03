@@ -2,18 +2,22 @@
 -- ======================================================================================================
 -- Deciding: fast switching (Rover) and player safety (all dogs)
 -- ======================================================================================================
+-- (4.6.3) the names other files use are declared here; the rest of this file sits in a do-block so its own
+-- helpers stop counting toward Lua's 200 locals of the main chunk once the file ends
+local SAFE, dot3, segment_distance, M, TEAM, P, PRIORITY, union, plan, BLANK, hidden, hider_restore, hider_apply, restore, apply, steer
+do
 local FAST = { fire = 0.15, lock = 0.5, recent = 8, recent_seconds = 3.0, near = 20, reach = 35 }
 -- The Rover spreads its fire: once an enemy is alight it moves on to one within 'reach' metres that it hasn't
 -- set alight in the last 'recent_seconds' (it remembers its last 'recent' targets). Only when there is no such
 -- enemy (the last one nearby, or every other one already burning) does it keep firing at the one it is on.
-local SAFE = { body_bottom = 0.2, body_top = 1.75, aim_heights = { 0.0, 0.5 } }
+SAFE = { body_bottom = 0.2, body_top = 1.75, aim_heights = { 0.0, 0.5 } }
 
 local function sub3(a, b) return { a[1] - b[1], a[2] - b[2], a[3] - b[3] } end
-local function dot3(a, b) return a[1] * b[1] + a[2] * b[2] + a[3] * b[3] end
+function dot3(a, b) return a[1] * b[1] + a[2] * b[2] + a[3] * b[3] end
 local function clamp01(x) return x < 0 and 0 or (x > 1 and 1 or x) end
 -- shortest distance between segments p1-q1 and p2-q2 (plain numbers throughout: it runs for every enemy and every
 -- protected body each frame, so it makes no tables)
-local function segment_distance(p1, q1, p2, q2)
+function segment_distance(p1, q1, p2, q2)
   local d1x, d1y, d1z = q1[1] - p1[1], q1[2] - p1[2], q1[3] - p1[3]
   local d2x, d2y, d2z = q2[1] - p2[1], q2[2] - p2[2], q2[3] - p2[3]
   local rx, ry, rz = p1[1] - p2[1], p1[2] - p2[2], p1[3] - p2[3]
@@ -49,7 +53,7 @@ end
 -- the dog repositions a lot, and checking its whole path then flagged enemies that were never in the way
 local MOTION = { steady_turn = 0.6, steady_move = 1.5, fast_turn = 1.5, fast_keep = 0.6, spin_min = 1.5,
   lookahead = { 0.12 }, arc = { 0.25, 0.5, 0.75, 1.0 }, ahead_after = 0.5, arc_max = 1.0 }
-local M = {}
+M = {}
 local TAU = 2 * math.pi
 local function wrap(a) a = (a + math.pi) % TAU; return a - math.pi end
 local function heading(v) return math.atan2(v[2], v[1]) end
@@ -74,8 +78,9 @@ local function dog_positions(st)
   end
   M.t, M.ang, M.yaw, M.o = t, ang, yaw, o
   local r0 = math.sqrt(o[1] * o[1] + o[2] * o[2])
-  -- (4.5.3 Test 9) a slow dog (Guard Dog, K-9) gets the look-ahead only for the last part of its line-up and while
-  -- it fires: early in its line-up it isn't about to shoot, and checked then it hid nearly every enemy whenever you
+  -- (4.5.3 Test 9) a slow dog (Guard Dog, K-9) gets the look-ahead at all times except the early part of its line-up
+  -- (4.6.3 review: the comment said only late line-up and firing; the code, tested in game, also keeps it while it has
+  -- no target or is in any other step): early in its line-up it isn't about to shoot, and checked then it hid nearly every enemy whenever you
   -- turned, each hide restarting its slow line-up (a tester's log: the Guard Dog fired 7% of the time it had a
   -- target, every hold in its lining-up step). Left off for the whole line-up, it fired through you more in the
   -- simulator (it starts firing while still swinging round). Its line from where it is now is always checked, and the
@@ -125,7 +130,7 @@ end
 
 -- teammates (version 3): the same body check against the other players' helldivers. Their positions arrive
 -- over the network a little late, so their body is a bit wider and also checked where they are heading.
-local TEAM = { margin = 0.1, lead = 0.2, reach = 90 }
+TEAM = { margin = 0.1, lead = 0.2, reach = 90 }
 
 -- the bodies to keep out of the line of fire: you, then each teammate near enough to matter
 local function bodies_of(st)
@@ -199,7 +204,7 @@ local function unsafe_enemies(st)
   return U, count
 end
 
-local P = {}   -- per-dog policy memory
+P = {}   -- per-dog policy memory
 local stuck_logged
 local function reset_policy(key) P = { key = key, target = 0, fire = 0, lock = 0, last = nil, recent = {}, hold = nil, kicked = nil, ignored = 0, stuck = {},
   lineup = {}, noshot = {} } end
@@ -247,7 +252,7 @@ local function pick_other(st, U, t, from)
   return best
 end
 
-local PRIORITY = { range = 25, band = 3, linger = 0.4, urgent = 10 }   -- metres from you / extra metres / seconds /
+PRIORITY = { range = 25, band = 3, linger = 0.4, urgent = 10 }   -- metres from you / extra metres / seconds /
 -- while the dog is already shooting, it is only pulled off for a closer enemy that is within 'urgent' metres of you;
 -- otherwise it finishes its burst and its next pick (within a second) is the closer one
 local COVER = true            -- hide enemies the dog has lost sight of
@@ -277,7 +282,7 @@ local COMMIT = { after = 1.0, burst = 0.6, timeout = 4.0 }
 -- switching don't add up to setting everything aside)
 local NOSHOT = { rover = 1.0, far = 1.0, other = 2.0, fair = 0.6, far_m = 25, rest = 4.0, forget = 5.0 }
 
-local function union(...)
+function union(...)
   local out = {}
   for _, set in ipairs({ ... }) do for id in pairs(set) do out[id] = true end end
   return out
@@ -307,7 +312,7 @@ local function note_change(st, old, held)
 end
 
 -- returns { block = set of enemy ids to hide from the dog, kick = force a re-selection now, reason = text }
-local function plan(st)
+function plan(st)
   local t = os.clock()
   if st.key ~= P.key then reset_policy(st.key) end
   local dt = P.last and math.min(math.max(t - P.last, 0), 0.25) or 0
@@ -328,14 +333,18 @@ local function plan(st)
   local attacking = st.target ~= 0 and (st.node == 6 or st.node == 7)
   if attacking then P.lock = P.lock + dt end
   if st.node == 7 and st.synced then P.fire = P.fire + dt; P.last_fire_t = t end
-  P.out_since = P.out_since or t
+  -- (4.6.3 review) measured from when it last had no target: before, time spent idle counted too, so the first enemy
+  -- it picked after a quiet spell was committed to at once and a closer threat couldn't pull it during its line-up
+  if st.target == 0 or not P.out_since then P.out_since = t end
   if st.target ~= 0 and P.commit ~= st.target and st.node == 6 and t - math.max(P.last_fire_t or -99, P.out_since) >= COMMIT.after then
     P.commit = st.target   -- it has gone too long without a shot: let it finish this one
   end
   if P.commit and (P.commit ~= st.target or P.fire >= COMMIT.burst) then P.commit = nil end
   -- (counted on the enemy it was pulled to, not the one it was pulled from)
   if P.need_fire and ((st.target ~= P.need_fire_from and (P.fire >= COMMIT.burst or st.target == 0)) or t - P.need_fire >= COMMIT.timeout) then P.need_fire = nil end
-  local committed = not st.dog.fast and ((P.commit ~= nil and P.commit == st.target) or (P.need_fire ~= nil and st.target ~= 0))
+  -- (4.6.3 review: and only once it is on another enemy - while the game hadn't yet answered the pull it was still on
+  -- the one it was pulled from, so 'focus' hid every other enemy, the closer one too, and the dog sat with nothing)
+  local committed = not st.dog.fast and ((P.commit ~= nil and P.commit == st.target) or (P.need_fire ~= nil and st.target ~= 0 and st.target ~= P.need_fire_from))
   -- line-up time without a shot, per enemy (kept across re-picks, reset as soon as the dog fires at it)
   if st.target ~= 0 then
     local L = P.lineup[st.target] or { acc = 0 }
@@ -515,7 +524,7 @@ local function plan(st)
         return { block = hide, kick = false, reason = reason }
       end
       P.hold = { target = st.target, block = block, until_t = t + BACKOFF_SECONDS, reason = reason }
-      if reason:find('^safety') then P.safety_t, P.safety_enemy, P.safety_step, P.safety_now = t, st.target, st.node, (st.unsafe_why[st.target] or ''):find('predicted') == nil and (st.unsafe_why[st.target] or ''):find('after the turn') == nil end
+      if reason:find('^safety') then P.safety_t, P.safety_enemy, P.safety_step, P.safety_now = t, st.target, st.node, (st.unsafe_why[st.target] or ''):find('after the turn') == nil end
       stats.ignored_redirects = stats.ignored_redirects + 1
       bump(session.actions, 'backing_off')
       event(string.format('backing off: %s ignored two redirects (target %d)', st.dog.name, st.target))
@@ -524,7 +533,7 @@ local function plan(st)
     P.hold = { target = st.target, block = block, until_t = t + HOLD_SECONDS, reason = reason }
     P.last_kick_t = t
     if reason == 'out_of_sight' then P.cover_t, P.cover_enemy, P.cover_step = t, st.target, st.node end
-    if reason:find('^safety') then P.safety_t, P.safety_enemy, P.safety_step, P.safety_now = t, st.target, st.node, (st.unsafe_why[st.target] or ''):find('predicted') == nil and (st.unsafe_why[st.target] or ''):find('after the turn') == nil end
+    if reason:find('^safety') then P.safety_t, P.safety_enemy, P.safety_step, P.safety_now = t, st.target, st.node, (st.unsafe_why[st.target] or ''):find('after the turn') == nil end
     return { block = union(block, hide), kick = true, reason = reason }
   end
 
@@ -647,8 +656,9 @@ end
 -- expire its target-selection timer when it has to choose again. Every blanked mask is remembered with
 -- its original value and put back as soon as it is no longer needed, when the dog changes, and at exit.
 -- ======================================================================================================
-local BLANK = '    '
-local hidden, hidden_key = {}, nil   -- mask address -> { id, entry, before }
+BLANK = '    '
+hidden = {}   -- mask address -> { id, entry, before }
+local hidden_key = nil
 
 local function unhide(addr, h)
   local id_now = read(h.entry, 4)
@@ -659,7 +669,7 @@ local function unhide(addr, h)
 end
 
 -- (the same bookkeeping serves the dog and each sentry: H maps mask address -> { id, entry, before })
-local function hider_restore(H)
+function hider_restore(H)
   local ok = true
   for addr, h in pairs(H) do
     if not unhide(addr, h) then ok = false end
@@ -672,7 +682,7 @@ end
 -- spawned with its Strider, never a target itself). The game can choose the Strider through its pilot, so a Strider
 -- hidden on its own was chosen again and again (test logs: hidden Strider re-picked, its pilot shown next to it).
 -- A rider within 3 m of an enemy being hidden is hidden with it.
-local hider_apply
+-- (hider_apply: declared at the top of this file)
 do
   local RIDERS = { [type_hash('fb9937035d652c43')] = true }
   local function with_riders(candidates, block)
@@ -727,13 +737,13 @@ hider_apply = function(H, candidates, block)
 end
 end
 
-local function restore()
+function restore()
   local ok = hider_restore(hidden)
   hidden_key = nil
   return ok
 end
 
-local function apply(st, block)
+function apply(st, block)
   if st.key ~= hidden_key then restore(); hidden_key = st.key end
   hider_apply(hidden, st.candidates, block)
 end
@@ -806,7 +816,7 @@ local function note_action(st, req)
     st.dog.name, st.target, st.unsafe_why and st.unsafe_why[st.target] or '?', where, st.node, #st.candidates, unsafe))
 end
 
-local function steer(st, req)
+function steer(st, req)
   if req.kick then note_action(st, req) end
   if READ_ONLY then
     if req.kick then last_reason = 'would ' .. req.reason end
@@ -831,4 +841,4 @@ local function steer(st, req)
   elseif r == 'no_shot' then stats.noshot_switches = stats.noshot_switches + 1
   else stats.switches = stats.switches + 1 end
 end
-
+end
