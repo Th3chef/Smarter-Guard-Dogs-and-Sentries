@@ -51,7 +51,13 @@ do
   end
 end
 local startup_notes = {}
-local function note(s) startup_notes[#startup_notes + 1] = s end
+-- (4.6.3 review: capped - some notes come during play, e.g. option changes and barrels found, and the list is written
+-- into the log every 10 s)
+local function note(s)
+  local n = #startup_notes
+  if n < 150 then startup_notes[n + 1] = s
+  elseif n == 150 then startup_notes[n + 1] = '(further notes left out)' end
+end
 local stats = { polls = 0, switches = 0, retargets = 0, safety_switches = 0, holds = 0, cover_switches = 0, armor_switches = 0, noshot_switches = 0, guarded_polls = 0, ignored_redirects = 0, memory_writes = 0, laser_frames = 0, write_failures = 0, read_errors = 0 }
 local last_reason, last_error = '-', nil
 local T0 = os.clock()
@@ -238,7 +244,10 @@ local function map_lookup(addr, key, max_capacity, header)
   if cap == 0 then return nil end
   need(cap <= max_capacity and bit.band(cap, cap - 1) == 0, 'map capacity')
   local slots = need(ptr_of(h, 0), 'map slots')
-  local hash = tonumber(ffi.cast('uint32_t', ffi.new('uint64_t', key) * ffi.new('uint64_t', mult)))
+  -- (4.6.3 review) the low 32 bits of key * mult in plain numbers (exact: each part stays below 2^49) - the 64-bit ffi
+  -- boxes it replaces cost an allocation per call when not compiled, and this runs per enemy per frame
+  local mlo = mult % 65536
+  local hash = (key * mlo + (key * ((mult - mlo) / 65536) % 65536) * 65536) % 4294967296
   for i = 0, math.min(cap, 128) - 1 do
     local e = rd(slots + 8 * bit.band(hash + i, cap - 1), 8, 'map slot')
     local k = u32(e, 0)
@@ -343,13 +352,15 @@ for _, d in ipairs(DOGS) do DOG_BY_PACK[d.pack] = d end
 --  hits_carried: may shoot enemies still aboard a dropship (rocket, autocannon: the splash hurts the dropship too);
 --    the other sentries leave them until they land
 --  bursts: short bursts at Heavy Devastators, like the Guard Dog (machine gun, Gatling)
+--  loss_time (4.6.3): its AI record's +408 holds the time it lost its target (it fires on at the spot for 1 s after);
+--    found on the Supply FRV gun's AI and the Gatling's, which the Resupply Pod gun also runs
 --  air_first: gunships and Stingrays before everything else (Gatling, autocannon, rocket, Laser); air_still: only while the gunship hovers (rocket)
 --  laser_at_enemy: no barrel axis to follow (rocket, autocannon): the laser runs from the muzzle to where the game aims
 --  the gun. Every other sentry's laser comes out along its barrel (4.5.3)
 -- The log says when a sentry-like AI shows up with a type that isn't in this list.
 local SENTRIES = {
   { name = 'Machine Gun Sentry', type = type_hash('37cde43876ba26bb'), ai = 312, line = 0.45, spread = 0.01, sweep = true, barrel_axis = 2, pen = 3, bursts = true, prefer = 'light' },
-  { name = 'Gatling Sentry', type = type_hash('ef85d6cf58e31d70'), ai = 213, line = 0.5, spread = 0.015, sweep = true, barrel_axis = 2, pen = 3, bursts = true, prefer = 'light', air_first = true },
+  { name = 'Gatling Sentry', type = type_hash('ef85d6cf58e31d70'), ai = 213, line = 0.5, spread = 0.015, sweep = true, barrel_axis = 2, pen = 3, bursts = true, loss_time = true, prefer = 'light', air_first = true },
   { name = 'Autocannon Sentry', type = type_hash('54d86057f5dacfb9'), ai = 5, line = 0.45, spread = 0.005, splash = 2.0, prefer = 'heavy', air_first = true, hits_carried = true, laser_at_enemy = true },   -- (type confirmed in game; unit hellpod/autocannon_turret/autocannon_turret)
   { name = 'Rocket Sentry', type = type_hash('37079568dc86e9c6'), ai = 611, line = 0.6, spread = 0.01, splash = 4.5, min_range = 10, prefer = 'heavy', air_first = true, hits_carried = true, air_still = true, laser_at_enemy = true,
     salvo_node = 13 },   -- (mid-salvo it ignores being asked to choose again)
@@ -377,11 +388,11 @@ local SENTRIES = {
   -- archive (263277e5added56c, with the ammo rack) and the Supply FRV's (149f685717737cae). Treated like the machine gun:
   -- skips armour it can't hurt (saving its rounds), short bursts at Heavy Devastators, unarmoured enemies first. 'ais':
   -- either of the Gatling template's two ids is accepted. The FRV's gun moves with the vehicle and fires past its driver
-  { name = 'Resupply Pod Gun', type = type_hash('73681ffd58fa1a90'), ai = 213, ais = { [212] = true, [213] = true }, line = 0.45, spread = 0.01, sweep = true, barrel_axis = 2, pen = 3, bursts = true, prefer = 'light',
+  { name = 'Resupply Pod Gun', type = type_hash('73681ffd58fa1a90'), ai = 213, ais = { [212] = true, [213] = true }, line = 0.45, spread = 0.01, sweep = true, barrel_axis = 2, pen = 3, bursts = true, loss_time = true, prefer = 'light',
     turn_hold = 30 },   -- (4.6.2: as the Supply FRV gun, whose AI it runs - turns to an enemy far round without firing)
   -- (4.5: barrel_axis 2 like the Gatling's, whose AI they run on: a Test 28 log found axis 2+ at 0.987 on the FRV gun;
   -- learning it on a moving vehicle failed as often as not)
-  { name = 'Supply FRV Gun', type = type_hash('4df41f84668d07fb'), ai = 212, ais = { [212] = true, [213] = true }, line = 0.45, spread = 0.01, sweep = true, barrel_axis = 2, pen = 3, bursts = true, prefer = 'light',
+  { name = 'Supply FRV Gun', type = type_hash('4df41f84668d07fb'), ai = 212, ais = { [212] = true, [213] = true }, line = 0.45, spread = 0.01, sweep = true, barrel_axis = 2, pen = 3, bursts = true, loss_time = true, prefer = 'light',
     vehicle = true, laser_when_firing = true, turn_hold = 30 },   -- (test builds log where its riders sit relative to it and to its line of fire)
     -- (turn_hold, 4.6.2, a tester: it wasted ammo swinging from one enemy to the next while firing - after a kill, the
     -- next enemy more than this many degrees off its barrel is turned to without firing; see engine_sentry.lua)
