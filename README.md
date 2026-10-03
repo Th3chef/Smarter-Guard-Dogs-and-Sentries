@@ -65,11 +65,11 @@ Get the latest zip from the [Releases](../../releases/latest) page (the `Smarter
 
 1. Install Bingus Shared Loader v15 or newer.
 2. Remove any older version of Smarter Guard Dogs (& Sentries).
-3. Add Smarter-Guard-Dogs-and-Sentries-4.6.2.zip in Arsenal or the HD2 Mod Manager and check the options you want.
-4. Deploy, then restart the game.
+3. Add Smarter-Guard-Dogs-and-Sentries-4.6.3.zip in Arsenal or the HD2 Mod Manager and check the options you want.
+4. Purge, then Deploy (always both, every time you install or update), then restart the game.
 
 ## Uninstall
-Remove it in your mod manager and deploy. Nothing is left behind in the game.
+Remove it in your mod manager, then Purge and Deploy. Nothing is left behind in the game.
 
 ## Compatibility
 
