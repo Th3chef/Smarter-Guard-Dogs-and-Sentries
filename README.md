@@ -97,6 +97,12 @@ Remove it in your mod manager, then Purge and Deploy. Nothing is left behind in 
 ## Troubleshooting
 Attach SmarterGuardDogsAndSentries.log to your bug report. You'll find it in %LOCALAPPDATA%\CowboyBingus\Helldivers2\Logs, next to the other Bingus mods' logs (paste that into the File Explorer address bar and press Enter). It lists what the mod did, how long each dog and sentry was out and how much of that time it had a target, and any errors.
 
+## Support
+
+All my mods are free and always will be. Every release is rigorously tested in real missions, highly optimized and kept working through game updates. If you'd like to help me keep that up and build new mods, you can support me on [Patreon](https://www.patreon.com/c/Chefboiardee).
+
+Thank you for diving with me!
+
 ## Credits
 
 - **retrox** - Laser Rover Targeting Optimization: the original idea and research (independent re-implementation, no shared code).
