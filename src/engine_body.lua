@@ -29,25 +29,33 @@ local PROCESS = K32.SgdGetCurrentProcess()
 -- (4.5) the log lives with the other Bingus mods' logs, %LOCALAPPDATA%\CowboyBingus\Helldivers2\Logs (a tester's call);
 -- straight in %LOCALAPPDATA% only if that folder isn't there. The files left in %LOCALAPPDATA% by earlier versions are
 -- moved (the cached scan) or removed (the old logs), once
-local LOGDIR
+local LOGDIR, CACHEDIR
 do
   local base = os.getenv('LOCALAPPDATA')
   if base then
     local dir = base .. '\\CowboyBingus\\Helldivers2\\Logs'
     local f = io.open(dir .. '\\SmarterGuardDogsAndSentries.log', 'a')
     if f then f:close(); LOGDIR = dir else LOGDIR = base end
-    -- (not in the Smarter SEAF build: its files have their own names and there is nothing of its own to move)
-    if not SGD.seaf_only then pcall(function()
+    CACHEDIR = LOGDIR
+    -- (4.6.4, the author's rule for every mod) numbered test builds write their logs into a 'test' folder inside the logs
+    -- folder, when that folder is there (Lua can't make folders without a console window, so it falls back to the logs
+    -- folder). Releases - the release's Tester zip too - keep logging to the logs folder
+    if TEST_BUILD then
+      local t = LOGDIR .. '\\test'
+      local g = io.open(t .. '\\SmarterGuardDogsAndSentries.log', 'a')
+      if g then g:close(); LOGDIR = t end
+    end
+    pcall(function()
       local old, new = base .. '\\SmarterGuardDogs', base .. '\\SmarterGuardDogsAndSentries'
       local g = io.open(old .. '.cache', 'r')
       if g then g:close(); os.rename(old .. '.cache', new .. '.cache'); os.remove(old .. '.cache') end
       os.remove(old .. '.log'); os.remove(old .. '-glow.txt'); os.remove(new .. '-glow.txt')
-      if LOGDIR ~= base then
+      if CACHEDIR ~= base then
         local c = io.open(new .. '.cache', 'r')
-        if c then c:close(); os.rename(new .. '.cache', LOGDIR .. '\\SmarterGuardDogsAndSentries.cache'); os.remove(new .. '.cache') end
+        if c then c:close(); os.rename(new .. '.cache', CACHEDIR .. '\\SmarterGuardDogsAndSentries.cache'); os.remove(new .. '.cache') end
         os.remove(new .. '.log'); os.remove(new .. '-research.log')
       end
-    end) end
+    end)
   end
 end
 local startup_notes = {}
@@ -101,7 +109,6 @@ local function write_log()
   table.sort(keys, function(x, y) return session.state_time[x] > session.state_time[y] end)
   f:write('time in each state:' .. (#keys == 0 and ' none' or '') .. '\n')
   for _, k in ipairs(keys) do f:write(string.format('  %-34s %s\n', k, mmss(session.state_time[k]))) end
-  if not SGD.seaf_only then   -- (the Smarter SEAF build handles no dogs or sentries)
   f:write('dogs:' .. (next(session.dog_time) and '' or ' none out yet') .. '\n')
   for name, d in pairs(session.dog_time) do
     f:write(string.format('  %-10s out %s, with a target %.0f%% of that, firing %.0f%% of the time it had one\n', name,
@@ -118,20 +125,19 @@ local function write_log()
   table.sort(snames)
   for _, name in ipairs(snames) do
     local d = session.sentries[name]
-    f:write(string.format('  %-18s placed %d, out %s, with a target %.0f%% of that; safety stops %d (for a teammate %d), armor skips %d, priority switches %d%s%s%s%s%s%s%s%s\n',
-      name, d.placed, mmss(d.out), d.out > 0 and 100 * d.targeted / d.out or 0, d.stops, d.mate_stops, d.armour, d.priority or 0,
+    f:write(string.format('  %-18s placed %d%s, out %s, with a target %.0f%% of that; safety stops %d (for a teammate %d), armor skips %d, priority switches %d%s%s%s%s%s%s%s%s\n',
+      name, d.placed, (d.max_out or 0) > 1 and string.format(' (up to %d out at once)', d.max_out) or '', mmss(d.out), d.out > 0 and 100 * d.targeted / d.out or 0, d.stops, d.mate_stops, d.armour, d.priority or 0,
       d.cooldowns and string.format(', cool-downs %d', d.cooldowns) or '',
       d.sentry_burst_done and string.format(', short bursts %d', d.sentry_burst_done) or '',
       d.sentry_spread and string.format(', set alight and moved on %d', d.sentry_spread) or '',
-      d.sentry_gunship_moving and string.format(', left a moving gunship %d', d.sentry_gunship_moving) or '',
       d.sentry_out_of_sight and string.format(', dropped one out of sight %d', d.sentry_out_of_sight) or '',
       d.sentry_on_dropship and string.format(', left one still on a dropship %d', d.sentry_on_dropship) or '',
       d.sentry_out_of_reach and string.format(', dropped one out of reach %d', d.sentry_out_of_reach) or '',
-      d.too_close and d.too_close > 0 and string.format(', an enemy inside its minimum range %s', mmss(d.too_close)) or ''))
+      d.too_close and d.too_close > 0 and string.format(', an enemy inside its minimum range %s', mmss(d.too_close)) or '',
+      TESTER and d.masks_back and string.format(', hidden enemies shown again by the game %d', d.masks_back) or ''))
   end
   if session.other_sentries > 0 then
     f:write(string.format('  other players\' sentries seen (run by their own game, not changed from yours): up to %d\n', session.other_sentries))
-  end
   end
   write_counts(f, READ_ONLY and 'actions it would have taken' or 'actions taken', session.actions)
   if #session.errors > 0 then
@@ -142,15 +148,11 @@ local function write_log()
     local T = session.timing
     f:write(string.format('mod cost per frame (test): average %.3f ms, highest %.2f ms, over 1 ms in %d of %d frames\n', T.sum / T.n, T.max, T.over, T.n))
   end
-  if TESTER and not SGD.seaf_only then write_counts(f, 'enemy types the dog picked (type id: times; for bug reports)', session.types) end
+  if TESTER then write_counts(f, 'enemy types the dog picked (type id: times; for bug reports)', session.types) end
   if TESTER and next(session.steps) then write_counts(f, 'what the dog was doing while out (polls; AI step 6 = lining up, 7 = firing)', session.steps) end
   if TESTER and next(session.sentry_nodes) then write_counts(f, 'what the sentries were doing (polls; by AI step)', session.sentry_nodes) end
   if TESTER and next(session.sentry_types) then write_counts(f, 'enemy types the sentries went for (type id: times)', session.sentry_types) end
   if TESTER and next(session.noshots) then write_counts(f, 'no_shot by enemy type and distance from the dog', session.noshots) end
-  if TESTER and session.seaf_text then
-    local ok, lines = pcall(session.seaf_text)
-    if ok then for _, l in ipairs(lines) do f:write(l .. '\n') end end
-  end
   if TESTER and #session.markers > 0 then
     f:write('F8 markers:\n')
     for _, e in ipairs(session.markers) do f:write('  ' .. e .. '\n') end
@@ -238,7 +240,9 @@ end
 local function u64bytes(v) U64[0] = v; return ffi.string(U64, 8) end
 
 -- open-addressing hash map used by the game's component managers: { slots*, ?, capacity, empty_key, multiplier }
-local function map_lookup(addr, key, max_capacity, header)
+-- ((4.6.4 review) soft: running out of probes means "not found" instead of aborting the whole read - for the per-enemy
+-- lookups, where one enemy in a long probe run left the dog unsteered every frame while it was listed)
+local function map_lookup(addr, key, max_capacity, header, soft)
   local h = header or rd(addr, 20, 'map header')
   local cap, empty, mult = u32(h, 8), u32(h, 12), u32(h, 16)
   if cap == 0 then return nil end
@@ -257,6 +261,7 @@ local function map_lookup(addr, key, max_capacity, header)
     end
     if k == empty then return nil end
   end
+  if soft then return nil end
   error({ Abort, 'map probe' }, 0)
 end
 
@@ -354,22 +359,26 @@ for _, d in ipairs(DOGS) do DOG_BY_PACK[d.pack] = d end
 --  bursts: short bursts at Heavy Devastators, like the Guard Dog (machine gun, Gatling)
 --  loss_time (4.6.3): its AI record's +408 holds the time it lost its target (it fires on at the spot for 1 s after);
 --    found on the Supply FRV gun's AI and the Gatling's, which the Resupply Pod gun also runs
---  air_first: gunships and Stingrays before everything else (Gatling, autocannon, rocket, Laser); air_still: only while the gunship hovers (rocket)
+--  air_first: gunships and Stingrays before everything else (Gatling, autocannon, rocket, Laser)
+--  reach (4.6.4): its range per the wiki (metres): only enemies this close count as a better target (Target Prioritization);
+--    without it 100 m (Autocannon, Rocket)
+--  barrel_min (4.6.4): the match its barrel axis needs to be learned (default 0.97): the Flame Sentry's arcing stream
+--    only lines up with its barrel to about 0.969 (a 4.6.3 Tester log), so its turns went unchecked
 --  laser_at_enemy: no barrel axis to follow (rocket, autocannon): the laser runs from the muzzle to where the game aims
 --  the gun. Every other sentry's laser comes out along its barrel (4.5.3)
 -- The log says when a sentry-like AI shows up with a type that isn't in this list.
 local SENTRIES = {
-  { name = 'Machine Gun Sentry', type = type_hash('37cde43876ba26bb'), ai = 312, line = 0.45, spread = 0.01, sweep = true, barrel_axis = 2, pen = 3, bursts = true, prefer = 'light' },
-  { name = 'Gatling Sentry', type = type_hash('ef85d6cf58e31d70'), ai = 213, line = 0.5, spread = 0.015, sweep = true, barrel_axis = 2, pen = 3, bursts = true, loss_time = true, prefer = 'light', air_first = true },
+  { name = 'Machine Gun Sentry', type = type_hash('37cde43876ba26bb'), ai = 312, line = 0.45, spread = 0.01, sweep = true, barrel_axis = 2, pen = 3, bursts = true, reach = 75, prefer = 'light' },
+  { name = 'Gatling Sentry', type = type_hash('ef85d6cf58e31d70'), ai = 213, line = 0.5, spread = 0.015, sweep = true, barrel_axis = 2, pen = 3, bursts = true, loss_time = true, reach = 75, prefer = 'light', air_first = true },
   { name = 'Autocannon Sentry', type = type_hash('54d86057f5dacfb9'), ai = 5, line = 0.45, spread = 0.005, splash = 2.0, prefer = 'heavy', air_first = true, hits_carried = true, laser_at_enemy = true },   -- (type confirmed in game; unit hellpod/autocannon_turret/autocannon_turret)
-  { name = 'Rocket Sentry', type = type_hash('37079568dc86e9c6'), ai = 611, line = 0.6, spread = 0.01, splash = 4.5, min_range = 10, prefer = 'heavy', air_first = true, hits_carried = true, air_still = true, laser_at_enemy = true,
+  { name = 'Rocket Sentry', type = type_hash('37079568dc86e9c6'), ai = 611, line = 0.6, spread = 0.01, splash = 4.5, min_range = 10, prefer = 'heavy', air_first = true, hits_carried = true, laser_at_enemy = true,
     salvo_node = 13 },   -- (mid-salvo it ignores being asked to choose again)
   -- (heat: the wiki says it heats 8 degrees a second while firing, burns out at 250 and cools 3.8-7.5 a second; in game it
   -- overheated after about 28 s on targets, so the estimate uses 11 a second. The game's own heat meter is used when found)
   { name = 'Laser Sentry', type = type_hash('56070f36cfffa8a8'), ai = 308, line = 0.35, spread = 0.002, sweep = true, barrel_axis = 2, pen = 4, heat = { cap = 250, rate = 11, cool = 3.8 },
-    prefer = 'light', air_first = true, spreads_fire = true, fire_node = 13 },   -- (ours runs along its barrel, over its own beam, turning with it)
+    reach = 50, prefer = 'light', air_first = true, spreads_fire = true, fire_node = 13 },   -- (ours runs along its barrel, over its own beam, turning with it)
   { name = 'Flame Sentry', type = type_hash('820cc3bafe962858'), ai = 207, line = 1.0, spread = 0.03, splash = 2.5, sweep = true,
-    range = 30, prefer = 'near', spreads_fire = 'keep' },   -- ('range' = metres from its muzzle: 4.5.2 set 20, a tester's call as the game let it pick
+    range = 30, prefer = 'near', spreads_fire = 'keep', barrel_min = 0.95 },   -- ('range' = metres from its muzzle: 4.5.2 set 20, a tester's call as the game let it pick
     -- enemies well past its flames; 4.6.1 30, a tester's call as its flames reach about 34 m. 'near': closest first, no armor tiers;
     -- 4.6.2 'keep': it moves on from an enemy it has set alight to the next unlit one, a tester's call)
   -- (4.0) the Tesla Tower (hellpod/tesla_turret): its arc reaches 20 m and chains from its target to whoever stands
@@ -380,19 +389,21 @@ local SENTRIES = {
   -- ('ring', shown the whole time it is out). AI 661 (Test 28 log); its gun sits ~2.6 m up
   { name = 'Tesla Tower', type = type_hash('74599e56f72f9d7e'), ai = 661, line = 0.6, spread = 0.02, splash = 10.0, spares_helldivers = true,
     ring = 20, muzzle_up = 2.6, salvo_node = 4 },   -- (step 4: its 1.5 s of firing, in which it doesn't choose again)
-  { name = 'Mortar Sentry', type = type_hash('51a0812e3bce2d74'), ai = 322, blast = 12, no_laser = true },   -- (AI 322 in game, Test 27 log)
-  { name = 'EMS Mortar Sentry', type = type_hash('b2053a1838092f8b'), ai = 324, blast = 8, no_laser = true },   -- (AI 324 in game, Test 28 log)
+  -- (4.6.4 wiki check: 'blast' = how far its shells must land from a helldiver - the Mortar's shockwave reaches 13 m
+  -- (blast 9 m), the EMS Mortar's stun 10 m and its shockwave 12 m; were 12 and 8)
+  { name = 'Mortar Sentry', type = type_hash('51a0812e3bce2d74'), ai = 322, blast = 13, no_laser = true },   -- (AI 322 in game, Test 27 log)
+  { name = 'EMS Mortar Sentry', type = type_hash('b2053a1838092f8b'), ai = 324, blast = 12, no_laser = true },   -- (AI 324 in game, Test 28 log)
   -- (5.0) the guns that come with a resupply pod (Armed Resupply Pods booster) and on the M-103 Supply FRV: both an
   -- automatic AR-23P Liberator Penetrator (medium armour penetration, 640 rpm, ~120-140 rounds, 30 m), run on the Gatling's
   -- AI template. Types from a 4.0.6 Test 8 log (AI 213 and 212); their units are unnamed, found in the resupply pod's
   -- archive (263277e5added56c, with the ammo rack) and the Supply FRV's (149f685717737cae). Treated like the machine gun:
   -- skips armour it can't hurt (saving its rounds), short bursts at Heavy Devastators, unarmoured enemies first. 'ais':
   -- either of the Gatling template's two ids is accepted. The FRV's gun moves with the vehicle and fires past its driver
-  { name = 'Resupply Pod Gun', type = type_hash('73681ffd58fa1a90'), ai = 213, ais = { [212] = true, [213] = true }, line = 0.45, spread = 0.01, sweep = true, barrel_axis = 2, pen = 3, bursts = true, loss_time = true, prefer = 'light',
+  { name = 'Resupply Pod Gun', type = type_hash('73681ffd58fa1a90'), ai = 213, ais = { [212] = true, [213] = true }, line = 0.45, spread = 0.01, sweep = true, barrel_axis = 2, pen = 3, bursts = true, loss_time = true, reach = 75, prefer = 'light',
     turn_hold = 30 },   -- (4.6.2: as the Supply FRV gun, whose AI it runs - turns to an enemy far round without firing)
   -- (4.5: barrel_axis 2 like the Gatling's, whose AI they run on: a Test 28 log found axis 2+ at 0.987 on the FRV gun;
   -- learning it on a moving vehicle failed as often as not)
-  { name = 'Supply FRV Gun', type = type_hash('4df41f84668d07fb'), ai = 212, ais = { [212] = true, [213] = true }, line = 0.45, spread = 0.01, sweep = true, barrel_axis = 2, pen = 3, bursts = true, loss_time = true, prefer = 'light',
+  { name = 'Supply FRV Gun', type = type_hash('4df41f84668d07fb'), ai = 212, ais = { [212] = true, [213] = true }, line = 0.45, spread = 0.01, sweep = true, barrel_axis = 2, pen = 3, bursts = true, loss_time = true, reach = 75, prefer = 'light',
     vehicle = true, laser_when_firing = true, turn_hold = 30 },   -- (test builds log where its riders sit relative to it and to its line of fire)
     -- (turn_hold, 4.6.2, a tester: it wasted ammo swinging from one enemy to the next while firing - after a kill, the
     -- next enemy more than this many degrees off its barrel is turned to without firing; see engine_sentry.lua)

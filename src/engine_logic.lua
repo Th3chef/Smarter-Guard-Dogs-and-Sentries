@@ -153,6 +153,9 @@ local function bodies_of(st)
 end
 
 -- enemies the dog must not shoot right now because you (or a teammate) are in the way, now or in a moment
+-- ((4.6.4 review) the aim points at each height are set once per enemy into tables kept for good: they were made
+-- anew inside the loop over dog positions x bodies x heights, thousands of tables a frame in a big fight)
+local AIM_PTS = {}
 local function unsafe_enemies(st)
   local U, count = {}, 0
   st.unsafe_why, st.safe_gap = {}, {}
@@ -171,12 +174,18 @@ local function unsafe_enemies(st)
       local closest, why = math.huge, nil
       -- a teammate farther from the dog than the enemy (plus the dog's swing and a body height) can't be in between
       local reach2 = (math.sqrt((p[1] - D0[1]) ^ 2 + (p[2] - D0[2]) ^ 2 + (p[3] - D0[3]) ^ 2) + 8) ^ 2
+      local heights = SAFE.aim_heights
+      for k = 1, #heights do
+        local q = AIM_PTS[k]
+        if not q then q = {}; AIM_PTS[k] = q end
+        q[1], q[2], q[3] = p[1], p[2], p[3] + heights[k]
+      end
       for bi, b in ipairs(bodies) do
         local a = b.at
         if not b.mate or (a[1] - D0[1]) ^ 2 + (a[2] - D0[2]) ^ 2 + (a[3] - D0[3]) ^ 2 < reach2 then
           for i, D in ipairs(spots) do
-            for _, h in ipairs(SAFE.aim_heights) do
-              local d = segment_distance(D, { p[1], p[2], p[3] + h }, b.lo, b.hi) - b.extra
+            for k = 1, #heights do
+              local d = segment_distance(D, AIM_PTS[k], b.lo, b.hi) - b.extra
               if d < closest then closest = d end
             end
             if dog.chain then
@@ -282,9 +291,13 @@ local COMMIT = { after = 1.0, burst = 0.6, timeout = 4.0 }
 -- switching don't add up to setting everything aside)
 local NOSHOT = { rover = 1.0, far = 1.0, other = 2.0, fair = 0.6, far_m = 25, rest = 4.0, forget = 5.0 }
 
+-- ((4.6.4 review) without packing the sets into a table first: one less table per call, several per frame)
 function union(...)
   local out = {}
-  for _, set in ipairs({ ... }) do for id in pairs(set) do out[id] = true end end
+  for i = 1, select('#', ...) do
+    local set = select(i, ...)
+    if set then for id in pairs(set) do out[id] = true end end
+  end
   return out
 end
 
@@ -487,7 +500,9 @@ function plan(st)
   local hide = union(U, F, N, C, R, S, focus)
   st.hide_sets = { unsafe = U, closer_threat = F, armour = N, cover = C, range = R, no_shot = S, focus = focus }
   -- a re-selection we asked for is still pending: keep the same enemies hidden until the target changes
-  if P.hold and st.target == P.hold.target and t < P.hold.until_t then
+  -- (4.6.4 review: not while its target has become unsafe - a hold for another reason must never delay a safety stop)
+  if P.hold and st.target == P.hold.target and t < P.hold.until_t
+     and not (U[st.target] and not tostring(P.hold.reason):find('^safety')) then
     return { block = union(P.hold.block, hide), kick = false, reason = P.hold.reason }
   end
   P.hold = nil
@@ -661,6 +676,9 @@ hidden = {}   -- mask address -> { id, entry, before }
 local hidden_key = nil
 
 local function unhide(addr, h)
+  -- ((4.6.4 review) a record kept aside under a negative key - its entry was taken over by another enemy in the
+  -- game's update, sentry_after - has no mask of its own to put back here; hider_apply adopts it where it moved to)
+  if addr < 0 then return true end
   local id_now = read(h.entry, 4)
   if id_now and u32(id_now, 0) == h.id and read(addr, 4) == BLANK then
     if not write(addr, h.before) then stats.write_failures = stats.write_failures + 1; return false end
@@ -701,7 +719,7 @@ do
   end
 hider_apply = function(H, candidates, block)
   -- (nothing hidden and nothing to hide - most frames for an idle dog or sentry: nothing to do)
-  if not next(block) and not next(H) then return end
+  if not next(block) and not next(H) then return 0 end
   if next(block) then block = with_riders(candidates, block) end
   local at = {}
   for _, c in ipairs(candidates) do at[c.mask_addr] = c end
@@ -719,9 +737,11 @@ hider_apply = function(H, candidates, block)
     end
   end
   -- put back what is no longer needed; note masks the game has refreshed on its own
+  -- ((4.6.4) counted and returned: a sentry whose hidden entries the game keeps showing again)
+  local back = 0
   for addr, h in pairs(H) do
     local c = at[addr]
-    if c.mask ~= BLANK then h.before = c.mask end
+    if c.mask ~= BLANK then h.before = c.mask; if block[h.id] then back = back + 1 end end
     if not block[h.id] then unhide(addr, h); H[addr] = nil end
   end
   -- hide what is needed
@@ -734,6 +754,7 @@ hider_apply = function(H, candidates, block)
       end
     end
   end
+  return back
 end
 end
 
