@@ -1,5 +1,9 @@
 # Changelog
 
+## 4.6.4
+
+The Rocket Sentry fires at gunships whether they're moving or hovering. Works alongside Bingus' Laser Sentry Cooldown (an overheated Laser Sentry cools down and comes back; this mod still stops it before it overheats). Target Prioritization uses each sentry's real range, the Mortar and EMS Mortar safety distances match their real blast (13 m and 12 m), the Flame Sentry's turns are safety-checked reliably, and a safety stop is never delayed by another redirect. Lighter on your PC, faster start-up, holds up better after game patches, and the log numbers each sentry.
+
 ## 4.6.3
 
 The Guard Dog and K-9 get their burst off on a new target before switching to a closer enemy. The Bright and Brightest laser settings now look different (Brightest is whiter). A laser problem can no longer stop the dog and sentry handling, and after an error your sentries are put back to normal too. More reliable detection of your dog's gun when other dogs are nearby, and lighter on your PC over long sessions.
