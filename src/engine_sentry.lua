@@ -9,7 +9,7 @@
 -- ======================================================================================================
 -- (4.6.3) outside helpers the sentry code uses only now and then, in one table: the function below may only
 -- reach 60 outside variables (LuaJIT), and this keeps plenty of room for new ones
-local EXT = { teammates = teammates, GROUPS = GROUPS, SINGLES = SINGLES, find_player = find_player, read_candidates = read_candidates, in_mission = in_mission, laser_wanted = laser_wanted, RED_SECONDS = RED_SECONDS, RED = RED, GREEN = GREEN, FLASH_HZ = FLASH_HZ, cannot_hurt = cannot_hurt, rest_parts = rest_parts, hexr = hexr, is_local = is_local, team_wanted = team_wanted, hider_apply = hider_apply }
+local EXT = { PERC = PERC, teammates = teammates, GROUPS = GROUPS, SINGLES = SINGLES, find_player = find_player, read_candidates = read_candidates, in_mission = in_mission, laser_wanted = laser_wanted, RED_SECONDS = RED_SECONDS, RED = RED, GREEN = GREEN, FLASH_HZ = FLASH_HZ, cannot_hurt = cannot_hurt, rest_parts = rest_parts, hexr = hexr, is_local = is_local, team_wanted = team_wanted, hider_apply = hider_apply }
 -- (built inside a function of its own: its many helpers would not fit among the main chunk's locals)
 local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
   local sentry_tick, sentry_restore, sentry_beams, sentry_after
@@ -39,7 +39,8 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
   -- enemies first, the machine gun, Gatling and Laser sentries for unarmoured ones; by distance (4.6.1, prefer = 'near',
   -- the Flame Sentry), the closest first. Only enemies in sight within 'reach' metres count, and an enemy within
   -- 'near_you' metres of a helldiver is never pushed back (it is the threat right now).
-  local PRIORITY = { reach = 80, near_you = 8, calm = 0.5, closer = 3, closer_keep = 4 }
+  -- (4.6.4 wiki check: reach 80 -> 100, the Autocannon and Rocket sentries' range)
+  local PRIORITY = { reach = 100, near_you = 8, calm = 0.5, closer = 3, closer_keep = 4 }
   -- (4.6.1) prefer = 'near' (the Flame Sentry): no armor tiers - an enemy more than 'closer' m further from its muzzle
   -- than the closest one it can pick waits (its current target only past 'closer_keep' m, so it doesn't flick between two)
   -- (4.6.2, a tester: it still stayed on a burning enemy farther out while one walked in: 3 / 4 m, were 5 / 8)
@@ -79,29 +80,9 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
     if a and not a.sentries_skip and a.av >= 4 then return 1 end
     return 0
   end
-  -- gunships on the move ('air_still': the rocket sentry, whose slow rockets miss a moving gunship): it only fires at
-  -- one that is hovering. Speed comes from how its position changes; above 'start' m/s it is moving, and it counts as
-  -- hovering again below 'stop' m/s (or when its position hasn't changed for 'still_after' seconds)
-  local AIR_MOVE = { start = 4.0, stop = 2.5, still_after = 0.6 }
-  local air_seen = {}   -- enemy id -> { x, y, z, time, speed, moving, frame, first seen }
-  local function air_moving(c, t)
-    local a = air_seen[c.id]
-    -- (one just seen counts as moving until it has been watched for 'still_after' seconds)
-    if not a then air_seen[c.id] = { c.pos[1], c.pos[2], c.pos[3], t, 0, false, FRAME, t }; return true end
-    if a[7] ~= FRAME then
-      a[7] = FRAME
-      local d2 = (c.pos[1] - a[1]) ^ 2 + (c.pos[2] - a[2]) ^ 2 + (c.pos[3] - a[3]) ^ 2
-      local dt = t - a[4]
-      if d2 > 0.0025 and dt >= 0.05 then
-        a[5] = a[5] * 0.5 + math.sqrt(d2) / dt * 0.5
-        a[1], a[2], a[3], a[4] = c.pos[1], c.pos[2], c.pos[3], t
-      elseif dt > AIR_MOVE.still_after then
-        a[5] = 0
-      end
-      if a[6] then a[6] = a[5] >= AIR_MOVE.stop else a[6] = a[5] > AIR_MOVE.start end
-    end
-    return a[6] or t - a[8] < AIR_MOVE.still_after
-  end
+  -- (4.6.4, a tester's call: the hover rule is gone - the rocket sentry fires at gunships and at enemies aboard a dropship
+  -- whether they move or hover. Its check watched how fast each one moved; in game it left a hovering dropship's
+  -- riders hidden for half a minute and the sentry sat idle)
   -- overheating (Laser Sentry): stand it down at 'stop' of its heat capacity and let it cool to 'resume'. Its heat
   -- is estimated from how long it has had a target; once the game's own heat meter has been read, that is used, and
   -- then it may run hotter ('stop_measured'). (The share of time it can fire is set by the game's heating and
@@ -115,7 +96,6 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
   local type_ai = {}                -- entity type -> AI id, looked up once per kind (to report unknown sentries)
   local barrel = {}                 -- per sentry kind: { axis, sign } once learned, or sums while learning
   local next_scan, pl, pl_until, last_count, last_scan = 0, nil, 0, nil, nil
-  local seaf_research, seaf_err     -- (test builds) the SEAF research below
   -- what we know about a sentry is kept by its entity id for a while after we lose track of it: the game moves a
   -- sentry's records around now and then, and a Laser Sentry must not come back with its heat reset to zero
   -- (that let one burn out: it kept "restarting" cold)
@@ -131,7 +111,7 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
     s.spare_ids = nil
     pcall(hider_restore, s.H)
     pcall(tesla_unfilter, s)
-    remembered[id] = { heat = s.heat, heat_measured = s.heat_measured, P = s.P, t = os.clock(), name = s.def.name, unit = s.unit, why = why }
+    remembered[id] = { heat = s.heat, heat_measured = s.heat_measured, P = s.P, tag = s.tag, t = os.clock(), name = s.def.name, unit = s.unit, why = why }
     sentries[id] = nil
   end
   local function carry_over(ns, old, t)
@@ -143,6 +123,7 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
     ns.heat = h and math.max(0, (old.heat or 0) - h.cool * math.max(0, gone - 5)) or 0
     ns.heat_measured = gone < 1 and old.heat_measured or nil
     if old.P then ns.P = old.P; ns.P.hold = nil end
+    ns.tag = old.tag
   end
   local noted_events = 0
 
@@ -220,14 +201,23 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
       RC.perc = rptr(g.perception, 'perception') + 48
       RC.targ = rptr(g.targeting, 'targeting')
       RC.tstates = rptr(RC.targ + 376, 'targeting states')
+      -- ((4.6.4 review) the maps' headers too, once a frame for every sentry: each look-up read its own before)
+      RC.beh_h = rd(RC.beh, 20, 'map header')
+      RC.perc_h = rd(RC.perc, 20, 'map header')
+      RC.targ_h = rd(RC.targ + 336, 20, 'map header')
+      RC.hb_h = {}
       RC.frame = FRAME
     end
-    if map_lookup(RC.beh, s.id, 32768) ~= s.bi then return false end
-    if map_lookup(RC.perc, s.id, 32768) ~= s.pi then return false end
-    if s.hb_mgr and map_lookup(s.hb_mgr + 0x28, s.id, 32768) ~= s.hb_idx then return false end
+    if map_lookup(RC.beh, s.id, 32768, RC.beh_h) ~= s.bi then return false end
+    if map_lookup(RC.perc, s.id, 32768, RC.perc_h) ~= s.pi then return false end
+    if s.hb_mgr then
+      local hh = RC.hb_h[s.hb_mgr]
+      if not hh then hh = rd(s.hb_mgr + 0x28, 20, 'map header'); RC.hb_h[s.hb_mgr] = hh end
+      if map_lookup(s.hb_mgr + 0x28, s.id, 32768, hh) ~= s.hb_idx then return false end
+    end
     -- (5.0) its targeting state too: where it is aiming and whether that is in step with its AI. The Supply FRV's gun
     -- had it move (a Test 15 log: every poll 'not synced', so no laser); the old address then never matched again
-    if s.slot and (map_lookup(RC.targ + 336, s.id, 16384) ~= s.slot or RC.tstates ~= s.tstates) then return false end
+    if s.slot and (map_lookup(RC.targ + 336, s.id, 16384, RC.targ_h) ~= s.slot or RC.tstates ~= s.tstates) then return false end
     return true
   end
 
@@ -265,12 +255,12 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
     if changed and not P.factions_noted then
       P.factions_noted = true
       local l = {}; for j = 0, n - 1 do l[#l + 1] = tostring(base[j]) end
-      event(string.format('sentry: %s now targets only enemies the mod has marked (its factions %s -> %d)', s.def.name, table.concat(l, ' '), MARK_ID))
+      event(string.format('sentry: %s now targets only enemies the mod has marked (its factions %s -> %d)', (s.tag or s.def.name), table.concat(l, ' '), MARK_ID))
     end
     if rewritten then
       P.filter_rewrites = (P.filter_rewrites or 0) + 1
       bump(session.actions, 'tesla_factions_rewritten')
-      if P.filter_rewrites <= 5 then event(string.format('sentry: %s had its factions written back by the game: set again (checked every frame from now on)', s.def.name)) end
+      if P.filter_rewrites <= 5 then event(string.format('sentry: %s had its factions written back by the game: set again (checked every frame from now on)', (s.tag or s.def.name))) end
     end
     -- the enemies in its list marked: only entries of a known enemy type - never a helldiver, nor an entry whose type
     -- can't be read (a helldiver's can read as one for a moment). Hidden ones are marked in what they get back when
@@ -341,7 +331,7 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
       count_action('tesla_mark_rewritten', lost)
       if not P.lost_noted and P.marks_lost >= 20 then
         P.lost_noted = true
-        event(string.format('sentry: %s: the game has written enemies\' entries afresh %d times (each passed over until marked again)', s.def.name, P.marks_lost))
+        event(string.format('sentry: %s: the game has written enemies\' entries afresh %d times (each passed over until marked again)', (s.tag or s.def.name), P.marks_lost))
       end
     end
     -- (forget marks on entries now holding something else)
@@ -379,23 +369,27 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
     end
   end
 
-  local function scan(t)
+  -- ((4.6.4 review) 'from': only the rows from there on - the game appends new agents at the end of its list, so when
+  -- the count rises (every enemy that spawns) only the new rows are read; the full scan, which also drops sentries
+  -- that went, stays on its 2 s timer)
+  local function scan(t, from)
     local g = A.g
     local targeting, behaviours, perception = rptr(g.targeting, 'targeting'), rptr(g.behaviours, 'behaviours'), rptr(g.perception, 'perception')
     local reg = rd(targeting + 308, 84, 'targeting registry')
     local tn, ta = u32(reg, 0), u32(reg, 12)
     need(ta <= tn and tn <= 8192, 'targeting registry')
     last_count = ta
-    local ptrs = ta > 0 and rd(rptr(targeting + 360, 'targeting entities'), 8 * ta, 'targeting entities') or ''
+    if from and (from >= ta or from < 0) then return end
+    local i0 = from or 0
+    local ptrs = ta > i0 and rd(rptr(targeting + 360, 'targeting entities') + 8 * i0, 8 * (ta - i0), 'targeting entities') or ''
     local seen, others = {}, 0
-    if seaf_research then seaf_research.begin() end
-    for i = 0, ta - 1 do
-      local p = ptr_of(ptrs, i * 8)
+    local full = not from
+    for i = i0, ta - 1 do
+      local p = ptr_of(ptrs, (i - i0) * 8)
       local e = p and read(p, 24)
       if e then
         local ty = e:sub(1, 8)
-        if seaf_research then pcall(seaf_research.see, e, p, i, behaviours, perception) end
-        local def = not SGD.seaf_only and SENTRY_BY_TYPE[ty]   -- (the Smarter SEAF build takes on no sentries)
+        local def = SENTRY_BY_TYPE[ty]
         -- (the Tesla Tower is left to the game when the Sentries option is set to leave it out: it is simply not taken
         -- on, like another player's sentry)
         local skip = def and def.spares_helldivers and not OPT.tesla()
@@ -413,18 +407,26 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
                 sentries[id] = ns
                 local d = session.sentries[def.name] or { placed = 0, out = 0, targeted = 0, stops = 0, mate_stops = 0, armour = 0 }
                 session.sentries[def.name] = d
-                local old = s and { heat = s.heat, heat_measured = s.heat_measured, P = s.P, t = t } or (remembered[id] and remembered[id].name == def.name and remembered[id].unit == u32(e, 12) and t - remembered[id].t <= 120 and remembered[id])
+                -- (4.6.4) how many of this kind are out at once (every sentry's cooldown is shorter than its lifetime, so
+                -- two or more of a kind are common)
+                local same = 0
+                for _, o in pairs(sentries) do if o.def == def then same = same + 1 end end
+                if same > (d.max_out or 0) then d.max_out = same end
+                local old = s and { heat = s.heat, heat_measured = s.heat_measured, P = s.P, tag = s.tag, t = t } or (remembered[id] and remembered[id].name == def.name and remembered[id].unit == u32(e, 12) and t - remembered[id].t <= 120 and remembered[id])
                 if old then
                   carry_over(ns, old, t)
                   if TESTER and refound_notes < 10 then
                     refound_notes = refound_notes + 1
-                    event(string.format('sentry: %s found again (%s; heat kept at %.0f%%)', def.name,
+                    event(string.format('sentry: %s found again (%s; heat kept at %.0f%%)', ns.tag or def.name,
                       s and (s.moved and 'its AI records moved' or s.ptr ~= p and 'its record moved' or 'its record changed') or ('lost for ' .. string.format('%.1fs', t - old.t) .. ', ' .. tostring(old.why)),
                       def.heat and 100 * ns.heat / def.heat.cap or 0))
                   end
                 else
                   d.placed = d.placed + 1
-                  event(string.format('sentry: %s out (AI %d%s)', def.name, ns.ai, ns.node and (', muzzle part ' .. ns.node) or ', muzzle not found: using its position'))
+                  -- (4.6.4) numbered in the log (the n-th of its kind placed this session), so two out at once - two
+                  -- Laser Sentries, say: one cools down faster than it lasts - can be told apart
+                  ns.tag = def.name .. ' #' .. d.placed
+                  event(string.format('sentry: %s out (AI %d%s)', ns.tag, ns.ai, ns.node and (', muzzle part ' .. ns.node) or ', muzzle not found: using its position'))
                 end
                 remembered[id] = nil
               else
@@ -460,7 +462,7 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
               if not other_teslas[id] then other_teslas[id] = true; event('sentry: another player\'s Tesla Tower is out (run by their game: not steered by this mod)') end
             end
           end
-        elseif not def and not SGD.seaf_only and EXT.is_local(e) and type_ai[ty] == nil then
+        elseif not def and EXT.is_local(e) and type_ai[ty] == nil then
           -- the first time a kind of agent shows up on your side: note it if it runs a sentry's AI but isn't known
           -- (that is how the Armed Resupply Pod's and the Supply FRV's guns were found, 4.0.6 Test 8)
           type_ai[ty] = false
@@ -474,12 +476,11 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
         end
       end
     end
+    if not full then return end
     for id, s in pairs(sentries) do
       if not seen[id] then forget(id, s, 'not in the list') end
     end
-    if seaf_research then seaf_research.finish() end
     for id, r in pairs(remembered) do if t - r.t > 120 then remembered[id] = nil end end
-    for id, a in pairs(air_seen) do if FRAME - a[7] > 600 then air_seen[id] = nil end end
     if others > session.other_sentries then session.other_sentries = others end
   end
 
@@ -522,7 +523,7 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
     end
     local st = { base = base, muzzle = muzzle or { base[1], base[2], base[3] + (s.def.muzzle_up or MUZZLE_UP) }, axes = axes, has_muzzle = muzzle ~= nil }
     st.centre = centre or st.muzzle
-    st.candidates, st.perc = EXT.read_candidates(s.pbase, st.muzzle, registry)
+    st.candidates, st.perc = EXT.read_candidates(s.pbase, st.muzzle, registry, s.def.spares_helldivers)
     st.target, st.node, st.rec_head = u32(rec, 24), u32(rec, 8), rec:sub(1, 4)
     st.deadline = u64(rec, 152)
     local ts = st.target ~= 0 and read(s.tstate, 32) or nil
@@ -569,11 +570,11 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
           for k, sum in pairs(b.sums) do if not best or sum > best then best, bk = sum, k end end
           b.tries = b.tries + 1
           local mean = best / b.n
-          if mean >= BARREL.min_cos then
+          if mean >= (s.def.barrel_min or BARREL.min_cos) then
             b.axis, b.sign = math.floor((bk + 1) / 2), bk % 2 == 1 and 1 or -1
             note(string.format('%s: barrel found (axis %d%s, match %.3f)', s.def.name, b.axis, b.sign > 0 and '+' or '-', mean))
           elseif b.tries >= BARREL.tries then
-            note(string.format('%s: barrel not found (best match %.3f); its turns are not checked', s.def.name, mean))
+            note(string.format('%s: barrel not found (best match %.3f, axis %d%s); its turns are not checked', s.def.name, mean, math.floor((bk + 1) / 2), bk % 2 == 1 and '+' or '-'))
           end
           b.sums, b.n, b.d0, b.spread = {}, 0, nil, nil
         end
@@ -599,31 +600,41 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
 
   -- does turning the barrel from 'f' onto 'aim' carry its line over the body? (the turn follows the shortest way
   -- round; when the enemy is almost straight behind it, either way is possible and the whole height band counts)
+  -- ((4.6.4 review) the same as before, worked in plain numbers: it made a handful of small tables per enemy, per body,
+  -- per frame for every sentry whose turns are checked)
+  local function nrm(x, y, z) local l = math.sqrt(x * x + y * y + z * z); if l < 1e-6 then return nil end; return x / l, y / l, z / l, l end
+  local function cl1(x) return x < -1 and -1 or (x > 1 and 1 or x) end
   local function sweep_hits(M, f, aim, b, def)
-    local d, L = norm({ aim[1] - M[1], aim[2] - M[2], aim[3] - M[3] })
-    if not d then return false end
-    local T = math.acos(math.max(-1, math.min(1, dot3(f, d))))
+    local dx, dy, dz, L = nrm(aim[1] - M[1], aim[2] - M[2], aim[3] - M[3])
+    if not dx then return false end
+    local f1, f2, f3 = f[1], f[2], f[3]
+    local T = math.acos(cl1(f1 * dx + f2 * dy + f3 * dz))
     if T < math.rad(SWEEP.min_deg) then return false end
     local both = T > math.rad(SWEEP.both_ways_deg)
-    local n = not both and norm({ f[2] * d[3] - f[3] * d[2], f[3] * d[1] - f[1] * d[3], f[1] * d[2] - f[2] * d[1] })
-    if not both and not n then return false end
-    for _, z in ipairs({ b.lo[3], (b.lo[3] + b.hi[3]) / 2, b.hi[3] }) do
-      local v, r = norm({ b.at[1] - M[1], b.at[2] - M[2], z - M[3] })
-      if v and r > 0.3 and r < L + 1 and r < SWEEP.reach then
+    local nx, ny, nz
+    if not both then
+      nx, ny, nz = nrm(f2 * dz - f3 * dy, f3 * dx - f1 * dz, f1 * dy - f2 * dx)
+      if not nx then return false end
+    end
+    local lo, hi, at = b.lo[3], b.hi[3], b.at
+    for k = 1, 3 do
+      local z = k == 1 and lo or (k == 2 and (lo + hi) / 2 or hi)
+      local vx, vy, vz, r = nrm(at[1] - M[1], at[2] - M[2], z - M[3])
+      if vx and r > 0.3 and r < L + 1 and r < SWEEP.reach then
         local alpha = math.atan((def.line + def.spread * r + b.extra) / r)
         local off
         if both then
-          local ev, ef, ed = math.asin(v[3]), math.asin(math.max(-1, math.min(1, f[3]))), math.asin(d[3])
+          local ev, ef, ed = math.asin(vz), math.asin(cl1(f3)), math.asin(dz)
           off = (ev >= math.min(ef, ed) - alpha and ev <= math.max(ef, ed) + alpha) and 0 or math.huge
         else
-          local s = dot3(v, n)
-          local vp = norm({ v[1] - n[1] * s, v[2] - n[2] * s, v[3] - n[3] * s })
-          if not vp then off = math.pi / 2
+          local sn = vx * nx + vy * ny + vz * nz
+          local px, py, pz = nrm(vx - nx * sn, vy - ny * sn, vz - nz * sn)
+          if not px then off = math.pi / 2
           else
-            local a1 = math.acos(math.max(-1, math.min(1, dot3(f, vp))))
-            local a2 = math.acos(math.max(-1, math.min(1, dot3(vp, d))))
-            if math.abs(a1 + a2 - T) < 1e-3 then off = math.asin(math.min(1, math.abs(s)))
-            else off = math.min(math.acos(math.max(-1, math.min(1, dot3(v, f)))), math.acos(math.max(-1, math.min(1, dot3(v, d))))) end
+            local a1 = math.acos(cl1(f1 * px + f2 * py + f3 * pz))
+            local a2 = math.acos(cl1(px * dx + py * dy + pz * dz))
+            if math.abs(a1 + a2 - T) < 1e-3 then off = math.asin(math.min(1, math.abs(sn)))
+            else off = math.min(math.acos(cl1(vx * f1 + vy * f2 + vz * f3)), math.acos(cl1(vx * dx + vy * dy + vz * dz))) end
           end
         end
         if off < alpha then return true end
@@ -849,7 +860,13 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
       if t < (s.probe_next or 0) then return end
       s.probe_next = t + HEAT.probe_every
       local v, over = meter_read(s)
-      if not v then return end
+      -- ((4.6.4 release review) the overheated flag holds the stand-down until it clears (Laser Sentry Cooldown); with
+      -- the meter unreadable for 2 s it is let go, so a lost meter can't keep the sentry stood down for good)
+      if not v then
+        if s.was_over and t - (s.meter_ok_t or t) >= 2 then s.was_over = nil end
+        return
+      end
+      s.meter_ok_t = t
       local m = meter[def.name] or {}
       meter[def.name] = m
       -- the unit: from how fast it climbs while firing
@@ -869,13 +886,14 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
       -- it overheated: the meter's value now is its true capacity
       if over and not s.was_over then
         m.scale = math.max(v, 1e-6)
-        event(string.format('%s OVERHEATED (heat meter %.3g; the mod had it at %.0f%%)', def.name, v, 100 * (s.heat_measured or (s.heat / def.heat.cap))))
+        event(string.format('%s OVERHEATED (heat meter %.3g; the mod had it at %.0f%%)%s', s.tag or def.name, v, 100 * (s.heat_measured or (s.heat / def.heat.cap)),
+          rawget(_G, 'LaserSentryCooldownInstalled') and ' - Laser Sentry Cooldown is installed: it cools down and comes back' or ''))
       end
       s.was_over = over
       if m.scale then s.heat_measured = v / m.scale end
       if TESTER and t >= (s.sample_next or 0) and (s.samples or 0) < 45 then
         s.sample_next, s.samples = t + 2, (s.samples or 0) + 1
-        event(string.format('heat sample: %s meter %.3g%s, estimate %.0f%%, %s, AI step %d', def.name, v, over and ' OVERHEATED' or '',
+        event(string.format('heat sample: %s meter %.3g%s, estimate %.0f%%, %s, AI step %d', s.tag or def.name, v, over and ' OVERHEATED' or '',
           100 * s.heat / def.heat.cap, st.target ~= 0 and 'on a target' or 'no target', st.node))
       end
       return
@@ -933,7 +951,7 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
       P.ignore_notes = (P.ignore_notes or 0) + 1
       local c = st.current
       local now = u64(rd(rptr(A.g.clock, 'clock') + 24, 8, 'clock'), 0)
-      event(string.format('sentry kept its target: %s target %d (%s) AI step %d, its mask %s, timer %.2fs, %s', s.def.name, st.target,
+      event(string.format('sentry kept its target: %s target %d (%s) AI step %d, its mask %s, timer %.2fs, %s', (s.tag or s.def.name), st.target,
         c and c.kind and EXT.hexr(c.kind) or '?', st.node, c and (c.mask == BLANK and 'hidden' or 'shown') or 'not listed',
         (st.deadline - now) / 1e6, reason) .. near_note(st, c))
     end
@@ -999,7 +1017,7 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
     if key ~= K.last then K.last = key; K.parts[#K.parts + 1] = string.format('+%.2f %s', t - K.t0, now) end
     if t - K.t0 >= 1.5 or #K.parts >= 12 then
       s.P.ktrace = nil
-      event(string.format('%s (test): %s target %d (%s) %s: %s', K.label, s.def.name, K.id, K.kind and (LABELS[K.kind] or EXT.hexr(K.kind)) or 'type unknown', K.why, table.concat(K.parts, ' | ')))
+      event(string.format('%s (test): %s target %d (%s) %s: %s', K.label, (s.tag or s.def.name), K.id, K.kind and (LABELS[K.kind] or EXT.hexr(K.kind)) or 'type unknown', K.why, table.concat(K.parts, ' | ')))
     end
   end
 
@@ -1023,7 +1041,7 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
           c.mask == BLANK and 'hidden by the mod' or 'shown'),
         #why > 0 and (', hidden: ' .. table.concat(why, '/')) or '')
     end
-    event(string.format('%s (test): %s target %d %s, AI step %d: %s; %d others listed%s', key or 'kill decision', s.def.name, target, what, st.node,
+    event(string.format('%s (test): %s target %d %s, AI step %d: %s; %d others listed%s', key or 'kill decision', (s.tag or s.def.name), target, what, st.node,
       any and yes or no, #rows, #out > 0 and (': ' .. table.concat(out, '; ')) or ''))
   end
 
@@ -1081,7 +1099,7 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
       if def.range and c and c.d2 and (range_notes[def.name] or 0) < 20 and not (P.range_seen and P.range_seen[target]) then
         P.range_seen = P.range_seen or {}; P.range_seen[target] = true
         range_notes[def.name] = (range_notes[def.name] or 0) + 1
-        note(string.format('range (test): %s picked %d at %.1f m (its range %d m)', def.name, target, math.sqrt(c.d2), def.range))
+        note(string.format('range (test): %s picked %d at %.1f m (its range %d m)', s.tag or def.name, target, math.sqrt(c.d2), def.range))
       end
       if c and c.kind then
         local a = ARMOR[c.kind]
@@ -1106,13 +1124,15 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
     if def.heat and st.heat then
       local measured = st.heat_from == 'measured'
       local stop, resume = measured and HEAT.stop_measured or HEAT.stop, measured and HEAT.resume_measured or HEAT.resume
-      if not P.cooling and st.heat >= stop then
+      -- (s.was_over: the game's overheated flag. Vanilla it never cools from that; with CowboyBingus's Laser Sentry
+      -- Cooldown it cools to nothing and is powered up again, so it stays stood down until the flag has cleared)
+      if not P.cooling and (st.heat >= stop or s.was_over) then
         P.cooling = true
         local d = session.sentries[def.name]; if d then d.cooldowns = (d.cooldowns or 0) + 1 end
-        event(string.format('%ssentry_cooling: %s at %.0f%% heat (%s); holds fire until it is down to %.0f%%', READ_ONLY and 'would ' or '', def.name, 100 * st.heat, st.heat_from, 100 * resume))
-      elseif P.cooling and st.heat <= resume then
+        event(string.format('%ssentry_cooling: %s at %.0f%% heat (%s); holds fire until it is down to %.0f%%', READ_ONLY and 'would ' or '', s.tag or def.name, 100 * st.heat, st.heat_from, 100 * resume))
+      elseif P.cooling and st.heat <= resume and not s.was_over then
         P.cooling = false
-        event(string.format('sentry: %s cooled down (%.0f%%, %s), firing again', def.name, 100 * st.heat, st.heat_from))
+        event(string.format('sentry: %s cooled down (%.0f%%, %s), firing again', s.tag or def.name, 100 * st.heat, st.heat_from))
       end
     end
     local cooling = def.heat and st.heat and P.cooling
@@ -1137,7 +1157,11 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
       local a = c and c.kind and ARMOR[c.kind]
       -- (the whole Devastator rests: body, shield and parts are separate entries, rest_parts in engine_armor.lua)
       -- (4.6.3 review: set once per burst - while it stayed on the enemy after the burst, the rest was pushed back every frame)
-      if a and a.burst and P.on_fire >= BURST_S.fire and P.burst_now ~= target then EXT.rest_parts(P.rest, cands, c, t + BURST_S.rest); P.burst_now = target end
+      -- (4.6.4 review: and not again while it is still resting - burst_now is cleared when it is dropped, and a gun with
+      -- nothing else to pick stays on it, which pushed the rest back every frame all the same)
+      if a and a.burst and P.on_fire >= BURST_S.fire and P.burst_now ~= target and not (P.rest[target] and t < P.rest[target]) then
+        EXT.rest_parts(P.rest, cands, c, t + BURST_S.rest); P.burst_now = target
+      end
     end
     for id, until_t in pairs(P.rest) do if t >= until_t then P.rest[id] = nil end end
     -- fire spreading (Laser Sentry): its target counts as lit once it has had enough beam
@@ -1149,7 +1173,7 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
     end
 
     -- ---- one pass over the enemies: every reason that depends on the enemy alone
-    --  U unsafe (linger), N can't hurt, O out of sight, C cooling, B resting between bursts, G moving gunship
+    --  U unsafe (linger), N can't hurt, O out of sight, C cooling, B resting between bursts
     -- out of sight (behind a wall or cover; not for mortars, which lob over it): hidden while it is, like the dogs.
     -- Its current target gets a short grace while it is only turning towards it, none while it is firing
     local sight = not def.blast
@@ -1157,8 +1181,7 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
     -- still aboard a dropship (not for the rocket and autocannon sentries, 'hits_carried': their splash also hurts the
     -- dropship): the dropships are found in the same pass
     local ships_wanted = not def.hits_carried and armour_on
-    local air_still = def.air_still and prio_on
-    local U, N, O, C, B, G, D, SP, Q, HV = NONE, NONE, NONE, NONE, NONE, NONE, NONE, NONE, NONE, NONE
+    local U, N, O, C, B, D, SP, Q, HV = NONE, NONE, NONE, NONE, NONE, NONE, NONE, NONE, NONE
     local HA = NONE   -- (4.6.3) the entries in HV that are a helldiver's (known type): only those are counted and logged
     -- (4.5.2) out of its reach (a sentry with a 'range', the Flame Sentry): enemies further from its muzzle than that
     -- are hidden from it; its current target only once it is RANGE_KEEP further out, so one at the edge isn't dropped
@@ -1182,7 +1205,6 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
         if cooling then C = put(C, id) end
         if range2 and c.d2 and c.d2 > (id == target and keep_range2 or range2) then RG = put(RG, id) end
         if bursts and P.rest[id] and t < P.rest[id] then B = put(B, id) end
-        if air_still and c.pos and c.kind and AIR_FIRST[c.kind] and air_moving(c, t) then G = put(G, id) end
       end
       -- (Tesla Tower) a helldiver in its list - you, or a teammate with Teammate safety on - is hidden from it
       -- (any helldiver with Teammate safety on; otherwise one within 6 m of you: the list's positions lag behind a
@@ -1242,14 +1264,16 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
     -- don't count as the better choice
     if def.prefer and prio_on then
       local heavy, near_first = def.prefer == 'heavy', def.prefer == 'near'
-      local reach2, near2 = PRIORITY.reach ^ 2, PRIORITY.near_you ^ 2
+      -- (4.6.4 review: its own range - 'reach' in its def, wiki: MG/Gatling/pod/FRV 75 m, Laser 50 m; else 100 m, the
+      -- Autocannon's and Rocket's - so a gun never drops a close enemy for one past its range)
+      local reach2, near2 = (def.reach or PRIORITY.reach) ^ 2, PRIORITY.near_you ^ 2
       -- self-defence first: while an enemy it can hurt (and isn't holding off for any reason) is right at the sentry,
       -- everything farther away waits
       local close, want
       for _, c in ipairs(cands) do
         local id = c.id
         if c.visible and open(c) and not U[id] and not N[id] and not C[id] and not O[id] and not D[id]
-          and not B[id] and not SP[id] and not G[id] and not RG[id] then
+          and not B[id] and not SP[id] and not RG[id] then
           if near_sentry(s, st, c) then close = close or {}; close[id] = true
           elseif not close and c.pos and c.d2 and c.d2 <= reach2 then
             if near_first then
@@ -1277,7 +1301,7 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
         for _, c in ipairs(cands) do
           -- (an enemy whose type can't be read, e.g. one being removed, is never reordered: it isn't known to be lighter)
           local id = c.id
-          if c.pos and c.kind and pickable(c, st) and not U[id] and not N[id] and not B[id] and not SP[id] and not G[id] then
+          if c.pos and c.kind and pickable(c, st) and not U[id] and not N[id] and not B[id] and not SP[id] then
             local k = armour_tier(c, heavy, def.air_first)
             if ((heavy and k < want) or (not heavy and k > want)) and not near_body(people, c.pos, near2) then Q = put(Q, c.id) end
           end
@@ -1287,16 +1311,16 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
     -- (4.5.1) enemies it was just steered off because they died: kept hidden while their entry is still in its list and
     -- not alive, up to DEAD_HIDE s, so the game can't pick the body again when it chooses (a tester saw the Supply FRV
     -- gun keep shooting corpses)
-    local DD = {}
+    local DD = NONE   -- ((4.6.4 review) a table only when there is something in it)
     if next(P.dead) then
       local alive_now = {}
       for _, c in ipairs(cands) do if c.alive then alive_now[c.id] = true end end
       for id, until_t in pairs(P.dead) do
-        if t < until_t and not alive_now[id] then DD[id] = true else P.dead[id] = nil end
+        if t < until_t and not alive_now[id] then if DD == NONE then DD = {} end; DD[id] = true else P.dead[id] = nil end
       end
     end
-    local hide = union(U, N, Q, C, B, SP, G, O, D, HV, DD, RG)
-    if TESTER then st.hide_sets = { unsafe = U, armour = N, priority = Q, cooling = C, burst_rest = B, burning = SP, gunship_moving = G, out_of_sight = O, on_dropship = D, helldiver = HV, dead = DD, out_of_reach = RG } end
+    local hide = union(U, N, Q, C, B, SP, O, D, HV, DD, RG)
+    if TESTER then st.hide_sets = { unsafe = U, armour = N, priority = Q, cooling = C, burst_rest = B, burning = SP, out_of_sight = O, on_dropship = D, helldiver = HV, dead = DD, out_of_reach = RG } end
     -- (the helldivers' entries, hidden again right after the game's update: sentry_after)
     -- (4.5: by id, not by place - the game moves entries up its list when one before them goes, e.g. an enemy it
     -- just killed, and a helldiver's entry moved into a new place would have been left shown there)
@@ -1307,7 +1331,7 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
         -- dead enemy lying next to one, is still hidden but was counted as a helldiver and kept here for good)
         if not P.spared then P.spared = {} end
         if HA[id] and not P.spared[id] then P.spared[id] = true; bump(session.actions, 'sentry_spared_helldiver')
-          if TESTER then event(string.format('sentry: %s had a helldiver among its targets (id %d): hidden from it', def.name, id)) end
+          if TESTER then event(string.format('sentry: %s had a helldiver among its targets (id %d): hidden from it', s.tag or def.name, id)) end
         end
       end
     end
@@ -1406,7 +1430,9 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
       bump(session.actions, 'sentry_target_released')
       return { block = hide, kick = false, release = P.lost_from, reason = 'sentry_target_lost', quiet = true }
     end
-    if P.hold and target == P.hold.target and t < P.hold.until_t then
+    -- (4.6.4 review: a hold for any other reason never delays a safety stop - in the sim a back-off after two ignored
+    -- priority asks let a machine gun sentry fire through you for 37 frames)
+    if P.hold and target == P.hold.target and t < P.hold.until_t and not (U_now[target] and P.hold.reason ~= 'sentry_safety') then
       return { block = union(P.hold.block, hide), kick = false, reason = P.hold.reason }
     end
     P.hold = nil
@@ -1431,8 +1457,6 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
       if C[target] then return drop_target(s, st, t, hide, 'sentry_cooling') end
       -- armour it can't hurt
       if N[target] and not P.stuck[target] then return drop_target(s, st, t, hide, 'sentry_cannot_hurt') end
-      -- a gunship it is on started moving (rocket sentry): switch to something else until it hovers again
-      if G[target] then return drop_target(s, st, t, hide, 'sentry_gunship_moving') end
       -- a better-suited enemy (by armour) is in sight: switch to it (at most every 'calm' seconds)
       if Q[target] and t - (P.prio_t or -99) >= PRIORITY.calm then
         P.prio_t = t
@@ -1477,7 +1501,7 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
       d.stops = d.stops + 1
       if (st.unsafe_why[st.target] or ''):find('teammate') then d.mate_stops = d.mate_stops + 1 end
     end
-    if req.reason == 'sentry_burst_done' or req.reason == 'sentry_spread' or req.reason == 'sentry_gunship_moving' or req.reason == 'sentry_out_of_sight' or req.reason == 'sentry_on_dropship' or req.reason == 'sentry_out_of_reach' then
+    if req.reason == 'sentry_burst_done' or req.reason == 'sentry_spread' or req.reason == 'sentry_out_of_sight' or req.reason == 'sentry_on_dropship' or req.reason == 'sentry_out_of_reach' then
       if d then d[req.reason] = (d[req.reason] or 0) + 1 end
       return
     end
@@ -1499,14 +1523,20 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
       local a = c and c.kind and ARMOR[c.kind]
       what = (a and (a.name .. ', armour ' .. a.av) or '?') .. where
     end
-    event(string.format('%s%s: %s (target %d, %s; AI step %d)', READ_ONLY and 'would ' or '', req.reason, s.def.name, st.target, what, st.node))
+    event(string.format('%s%s: %s (target %d, %s; AI step %d)', READ_ONLY and 'would ' or '', req.reason, (s.tag or s.def.name), st.target, what, st.node))
   end
 
   local function steer_sentry(s, st, req, me)
     if (req.kick and not req.quiet) or req.count then note_sentry(s, st, req, me) end
     if READ_ONLY then return end
-    if read(s.rec_addr, 4) ~= st.rec_head then return end
-    EXT.hider_apply(s.H, st.candidates, req.block)
+    local d = session.sentries[s.def.name]
+    if read(s.rec_addr, 4) ~= st.rec_head then return end   -- (its AI record changed under us: nothing written)
+    local back = EXT.hider_apply(s.H, st.candidates, req.block)
+    -- (4.6.4) the game showed again entries the mod had hidden from it (counted; a tester: the Armed Resupply Pod's gun
+    -- kept firing at a Heavy Devastator hidden from it). Hiding them again right after the game's update (Test 4: the
+    -- pod gun; Test 9: everything) never caught one in game - the game shows them again later in the frame - so the
+    -- next poll's hider_apply is what hides them again
+    if back > 0 and d then d.masks_back = (d.masks_back or 0) + back end
     -- (the game clock, read once for both writes below)
     local now = (req.kick or req.release) and u64(rd(rptr(A.g.clock, 'clock') + 24, 8, 'clock'), 0)
     if req.kick then
@@ -1543,7 +1573,7 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
         local k = s.def.name .. '/release'
         if (ktrace_count[k] or 0) < 10 then
           ktrace_count[k] = (ktrace_count[k] or 0) + 1
-          event(string.format('release (test): %s let go of %d: its targeting state %s, AI target %s, step %d: %s', s.def.name, req.release,
+          event(string.format('release (test): %s let go of %d: its targeting state %s, AI target %s, step %d: %s', (s.tag or s.def.name), req.release,
             ts and string.format('%d/%d', u32(ts, 0), u32(ts, 4)) or 'unreadable', rec and tostring(u32(rec, 24)) or 'unreadable', st.node,
             (wrote and 'written 0/32767' or 'not written (it no longer held that target)') .. (req.lost_moved and string.format('; its loss time (%.2f s ago) moved back 1 s', req.lost_moved / 1e6) or '')))
         end
@@ -1567,13 +1597,15 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
     st.close_enemy = best
     return best
   end
-  -- @@SEAF_RESEARCH@@ (the Smarter SEAF build puts engine_seaf.lua here; in this mod seaf_research stays nil)
-
   -- st_dog: the dog's state this frame (nil when no dog is out); returns true while any sentry of yours is out
   sentry_tick = function(st_dog, t, dt)
     -- (the Sentries option off: your sentries are left to the game)
-    if not SGD.seaf_only and not OPT.sentries() then
-      if next(sentries) then sentry_restore() end
+    -- ((4.6.4 review) each is forgotten into 'remembered' - its tag, heat and policy - so turning the option back on
+    -- mid-mission doesn't count it as placed again or reset a Laser Sentry's heat; wiped at mission end)
+    if not OPT.sentries() then
+      for id, s in pairs(sentries) do forget(id, s, 'Sentries option off') end
+      -- ((4.6.4 release review) and out of a mission it goes, as with the option on (that wipe is further down)
+      if (next(remembered) or next(not_steered)) and not st_dog and not EXT.in_mission() then remembered, not_steered = {}, {} end
       return false
     end
     if not st_dog and not EXT.in_mission() then
@@ -1581,11 +1613,10 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
       -- (4.6.3 review) what is remembered about sentries goes too, also when none of yours was out at the end (all
       -- destroyed or used up): before, it could carry into the next mission and a new sentry reusing an id and unit
       -- number took over the old one's state
-      if next(remembered) or next(air_seen) or next(not_steered) then remembered, air_seen, not_steered = {}, {}, {} end
+      if next(remembered) or next(not_steered) then remembered, not_steered = {}, {} end
       pl = nil
       noted_events = 0   -- (up to 40 sentry events are logged per mission)
       other_teslas, other_noted = {}, {}
-      if seaf_research then seaf_research.reset() end
       return false
     end
     -- (a new sentry changes the number of agents: rescan then, at most twice a second; otherwise every 2 s)
@@ -1595,13 +1626,12 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
     -- (only a rising count can mean a new sentry: a falling one is noted so the next rise is seen; a sentry that is
     -- removed is dropped by its own failed read, and the regular scan catches anything else)
     if count and last_count and count < last_count then last_count = count end
-    if t >= next_scan or (count and count > (last_count or -1) and t >= (last_scan or 0) + 0.5) then
+    if t >= next_scan then
       next_scan, last_scan = t + SCAN_SECONDS, t
       scan(t)
-    end
-    if seaf_research then
-      local ok, err = pcall(seaf_research.tick, t)
-      if not ok and not seaf_err then seaf_err = true; event('SEAF research: error ' .. tostring(type(err) == 'table' and err[2] or err)) end
+    elseif count and last_count and count > last_count and t >= (last_scan or 0) + 0.5 then
+      last_scan = t
+      scan(t, last_count)   -- (only the new rows)
     end
     if not next(sentries) then return false end
     local me, mates
@@ -1691,7 +1721,7 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
           s.busy = b
         elseif not s.moved then
           -- gone (destroyed, out of ammo, picked up) or unreadable: put its masks back and forget it
-          if not ok then event('sentry: ' .. s.def.name .. ' dropped after a read error: ' .. tostring(type(st) == 'table' and st[2] or st)) end
+          if not ok then event('sentry: ' .. (s.tag or s.def.name) .. ' dropped after a read error: ' .. tostring(type(st) == 'table' and st[2] or st)) end
           forget(id, s, ok and tostring(why) or 'read error')
           next_scan = 0   -- look for it again straight away (usually the game has only moved its records)
         end
@@ -1704,7 +1734,7 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
   sentry_restore = function()
     local ok = true
     for _, s in pairs(sentries) do if not hider_restore(s.H) then ok = false end; pcall(tesla_unfilter, s) end
-    sentries, remembered, air_seen, not_steered = {}, {}, {}, {}
+    sentries, remembered, not_steered = {}, {}, {}
     return ok
   end
 
@@ -1854,7 +1884,7 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
           bit.band(c.flags or 0, 1), c.ent and 'in registry' or 'gone from registry'))
         local okn, now = pcall(function() return u64(rd(rptr(A.g.clock, 'clock') + 24, 8, 'clock'), 0) end)
         if okn and now then life = life .. string.format(', timer %.2fs', (st.deadline - now) / 1e6) end
-        out[#out + 1] = string.format('%s: target %d%s%s, AI step %d%s%s, %d enemies listed, hidden: %s%s', s.def.name, st.target,
+        out[#out + 1] = string.format('%s: target %d%s%s, AI step %d%s%s, %d enemies listed, hidden: %s%s', s.tag or s.def.name, st.target,
           c and c.kind and (' type ' .. EXT.hexr(c.kind) .. (LABELS[c.kind] and (' ' .. LABELS[c.kind]) or '')) or '', life,
           st.node, st.synced and ', aiming' or '', off, #st.candidates, #hid > 0 and table.concat(hid, ', ') or 'none',
           me and string.format(', %.0f m from you', math.sqrt((st.base[1] - me[1]) ^ 2 + (st.base[2] - me[2]) ^ 2)) or '')
@@ -1862,10 +1892,6 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
           .. (st.spread_state and (', ' .. st.spread_state) or '')
         for _, l in ipairs(enemies_of(st)) do out[#out] = out[#out] .. '\n        ' .. l end
       end
-    end
-    if seaf_research then
-      local ok, lines = pcall(seaf_research.marker, me)
-      if ok then for _, l in ipairs(lines) do out[#out + 1] = l end else out[#out + 1] = 'SEAF research: marker error ' .. tostring(type(lines) == 'table' and lines[2] or lines) end
     end
     return out
   end
@@ -1885,27 +1911,33 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
         if okc and not cur then s.moved, s.moved_after, s.spare_ids, s.st = true, true, nil, nil
         elseif okc then
           s.after_ok = FRAME
-          local perc = read(s.pbase, 5112)
-          if perc then
+          local PB = EXT.PERC
+          if PB.read(s.pbase) then
             -- (the groups' entries and the three single entries after them)
             local offs, no = s.offs or {}, 0
             s.offs = offs
             for _, grp in ipairs(EXT.GROUPS) do
-              local n = u32(perc, grp[1])
+              local n = PB.u32(grp[1])
               if n <= 16 then for k = 0, n - 1 do no = no + 1; offs[no] = grp[2] + k * 80 end end
             end
-            for _, one in ipairs(EXT.SINGLES) do if u32(perc, one[1] + 72) ~= 0 then no = no + 1; offs[no] = one[1] end end
+            for _, one in ipairs(EXT.SINGLES) do if PB.u32(one[1] + 72) ~= 0 then no = no + 1; offs[no] = one[1] end end
             for i = 1, no do
               local off = offs[i]
-              local id = u32(perc, off)
+              local id = PB.u32(off)
               if id ~= 0 and ids[id] then
-                local m = perc:sub(off + 77, off + 80)
+                local m = PB.str(off + 76, 4)
                 if m ~= BLANK then
-                  -- (a helldiver's mask is never given back with the tower's mark in it)
-                  if bit.band(u32(m, 0), MARK) ~= 0 then m = pack32(bit.band(u32(m, 0), bit.bnot(MARK))) end
+                  -- (a helldiver's mask is never given back with the tower's mark in it - the Tesla Tower only)
+                  if s.def.spares_helldivers and bit.band(u32(m, 0), MARK) ~= 0 then m = pack32(bit.band(u32(m, 0), bit.bnot(MARK))) end
                   local addr = s.pbase + off + 76
                   local h = s.H[addr]
-                  if h and h.id == id then h.before = m else s.H[addr] = { id = id, entry = s.pbase + off, before = m } end
+                  if h and h.id == id then h.before = m
+                  else
+                    -- ((4.6.4 review) another enemy's record at this address - the game moved its entry in its update:
+                    -- kept aside under a negative key, so hider_apply adopts it where it went instead of losing its mask)
+                    if h then local k = -addr; while s.H[k] do k = k - 0.25 end; s.H[k] = h end
+                    s.H[addr] = { id = id, entry = s.pbase + off, before = m }
+                  end
                   if not write(addr, BLANK) then stats.write_failures = stats.write_failures + 1 end
                 end
               end

@@ -101,17 +101,26 @@ local function scan_layout(game, exe, dll_hash, exe_hash)
   local text, rva = code_section(game)
   local L = { dll_hash = dll_hash, exe_hash = exe_hash, globals = {} }
   local function at(p, what) local o, why = find_once(text, p); assert(o, what .. ': ' .. tostring(why)); return o end
+  -- ((4.6.4 review) when the patterns disagree the value most of them agree on wins and the odd one is noted; only a
+  -- tie is an error - before, one pattern finding the wrong place after a patch turned the whole mod off)
   local function target(txt, base_rva, pats, what)
-    local val
+    local votes, order = {}, {}
     for _, p in ipairs(pats) do
       local o = find_once(txt, p.p)
       if o then
         local v = base_rva + o + p.size + si32(txt, o + p.disp_at)
-        assert(not val or val == v, what .. ': patterns disagree')
-        val = v
+        if not votes[v] then votes[v] = 0; order[#order + 1] = v end
+        votes[v] = votes[v] + 1
       end
     end
-    return assert(val, what .. ': not found')
+    local val, best, tie = nil, 0, false
+    for _, v in ipairs(order) do
+      if votes[v] > best then val, best, tie = v, votes[v], false elseif votes[v] == best then tie = true end
+    end
+    assert(val, what .. ': not found')
+    assert(not tie, what .. ': patterns disagree')
+    if #order > 1 then note(string.format('%s: %d of the patterns agree (the others found another place)', what, best)) end
+    return val
   end
   for name, pats in pairs(PATTERNS.globals) do L.globals[name] = target(text, rva, pats, name) end
   for name, pats in pairs(PATTERNS.optional or {}) do
@@ -122,19 +131,26 @@ local function scan_layout(game, exe, dll_hash, exe_hash)
   L.owner_index = su32(text, at(PATTERNS.owner_index, 'owner map') + 3) - 8
   L.owner_rows = su32(text, at(PATTERNS.owner_rows, 'owner entities') + 10) - 8
   -- the laser drones' AI behaviour id: the dispatcher case that calls the laser drone handler
-  local d = at(PATTERNS.dispatch.p, 'behaviour dispatcher')
-  local count, tbl = su32(text, d + PATTERNS.dispatch.count_at), su32(text, d + PATTERNS.dispatch.table_at)
-  local handler = find_once(text, PATTERNS.laser_fn)
-  if handler then
-    for i = 0, count do
-      local e = su32(text, tbl - rva + 4 * i) - rva
-      if e >= 0 and e + 17 <= #text and text:sub(e + 1, e + 6) == '\139\215\72\139\203\232'
-        and text:sub(e + 11, e + 17) == '\72\129\196\208\1\0\0' and e + 10 + si32(text, e + 6) == handler then
-        assert(not L.laser_behaviour, 'laser handler found twice')
-        L.laser_behaviour = i + 1
+  -- ((4.6.4 review) all of it in a pcall with the jump table bounds-checked: if it fails after a patch, the last known
+  -- id is used instead of turning the whole mod off)
+  local okd, whyd = pcall(function()
+    local d = at(PATTERNS.dispatch.p, 'behaviour dispatcher')
+    local count, tbl = su32(text, d + PATTERNS.dispatch.count_at), su32(text, d + PATTERNS.dispatch.table_at)
+    local handler = find_once(text, PATTERNS.laser_fn)
+    if handler and count < 4096 then
+      for i = 0, count do
+        local o = tbl - rva + 4 * i
+        if o < 0 or o + 4 > #text then break end
+        local e = su32(text, o) - rva
+        if e >= 0 and e + 17 <= #text and text:sub(e + 1, e + 6) == '\139\215\72\139\203\232'
+          and text:sub(e + 11, e + 17) == '\72\129\196\208\1\0\0' and e + 10 + si32(text, e + 6) == handler then
+          assert(not L.laser_behaviour, 'laser handler found twice')
+          L.laser_behaviour = i + 1
+        end
       end
     end
-  end
+  end)
+  if not okd then L.laser_behaviour = nil; note('laser behaviour scan failed: ' .. tostring(whyd)) end
   if not L.laser_behaviour then note('laser behaviour not identified; using the last known id'); L.laser_behaviour = KNOWN.laser_behaviour end
   text = nil
   local etext, erva = code_section(exe)
@@ -151,26 +167,57 @@ local function serialize(v)
   return '{' .. table.concat(parts, ',') .. '}'
 end
 
+-- (4.6.4 review) a module's PE time stamp and image size, from its header in memory ('stamp/size')
+local function pe_stamp(module)
+  local h = read(tonumber(ffi.cast('uintptr_t', module)), 1024)
+  if not h then return nil end
+  local pe = su32(h, 0x3c)
+  if pe + 24 + 60 > #h or h:sub(pe + 1, pe + 4) ~= 'PE\0\0' then return nil end
+  return su32(h, pe + 8) .. '/' .. su32(h, pe + 24 + 56)
+end
+
+-- (the mod's version and its pattern set: a cached scan from another version of the mod is scanned again)
+local function cache_tag()
+  local names = {}
+  for k in pairs(PATTERNS.globals) do names[#names + 1] = k end
+  for k in pairs(PATTERNS.optional or {}) do names[#names + 1] = k end
+  table.sort(names)
+  -- ((4.6.4 release review) the plain version number: the release and its Tester share a scan)
+  return (VERSION:match('^[%d%.]+') or VERSION) .. '|' .. table.concat(names, ',')
+end
+
 local function resolve_layout()
   local game, exe = K32.SgdGetModuleHandleA('game.dll'), K32.SgdGetModuleHandleA(nil)
   assert(game ~= nil and exe ~= nil, 'game modules not loaded')
-  local gsha, esha = file_sha256(game), file_sha256(exe)
-  note('game.dll ' .. gsha:sub(1, 16) .. '  exe ' .. esha:sub(1, 16))
-  local L
+  local gst, est = pe_stamp(game), pe_stamp(exe)
+  local L, gsha, esha
+  if gst and est and gst == KNOWN.dll_stamp and est == KNOWN.exe_stamp then
+    -- (a known build, by its stamps: no hashing)
+    gsha, esha = KNOWN.dll_hash, KNOWN.exe_hash
+    note('game.dll ' .. gsha:sub(1, 16) .. '  exe ' .. esha:sub(1, 16) .. ' (by stamp)')
+  else
+    gsha, esha = file_sha256(game), file_sha256(exe)
+    note('game.dll ' .. gsha:sub(1, 16) .. '  exe ' .. esha:sub(1, 16))
+  end
   if gsha == KNOWN.dll_hash and esha == KNOWN.exe_hash then
     L = KNOWN; note('layout: built-in (known game version)')
   else
-    local cache = LOGDIR and (LOGDIR .. '\\SmarterGuardDogsAndSentries.cache')
+    local cache = CACHEDIR and (CACHEDIR .. '\\SmarterGuardDogsAndSentries.cache')
     local f = cache and io.open(cache, 'r')
     if f then
       local src = f:read('*a'); f:close()
       local fn = loadstring and loadstring('return ' .. src)
       local ok, c = pcall(fn or error)
-      if ok and type(c) == 'table' and c.dll_hash == gsha and c.exe_hash == esha then L = c; note('layout: cached scan of this game version') end
+      -- ((4.6.4 review) and from this version of the mod, with every required address in it)
+      local whole = ok and type(c) == 'table' and type(c.globals) == 'table'
+      if whole then for k in pairs(PATTERNS.globals) do if not c.globals[k] then whole = false end end end
+      if whole and c.dll_hash == gsha and c.exe_hash == esha and c.mod == cache_tag() then L = c; note('layout: cached scan of this game version')
+      elseif ok and type(c) == 'table' and c.dll_hash == gsha then note('layout: the cached scan is from another version of the mod') end
     end
     if not L then
       note('layout: new game version, scanning game code...')
       L = scan_layout(game, exe, gsha, esha)
+      L.mod = cache_tag()
       if cache then local w = io.open(cache, 'w'); if w then w:write(serialize(L)); w:close() end end
     end
   end

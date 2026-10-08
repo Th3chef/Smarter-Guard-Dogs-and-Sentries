@@ -6,7 +6,7 @@ local A   -- absolute layout, set at start-up
 
 -- (4.6.3) the names other files use are declared here; the rest of this file sits in a do-block so its own
 -- helpers stop counting toward Lua's 200 locals of the main chunk once the file ends
-local is_local, unit_position, team, team_wanted, OPT, FRAME, teammates, team_detail, GROUPS, SINGLES, find_player, read_candidates, in_mission, read_state
+local is_local, unit_position, team, team_wanted, OPT, FRAME, teammates, team_detail, GROUPS, SINGLES, find_player, read_candidates, in_mission, read_state, PERC
 do
 function is_local(entity) return bit.band(entity:byte(21), 3) == 1 end
 
@@ -35,9 +35,9 @@ local function unit_object(id)
   unit_cache[id] = obj
   return obj, h
 end
-function unit_position(id, want_axes)
-  if not id or id == 0 then return nil end
-  local ok, pos = pcall(function()
+-- ((4.6.4 review) the work in a named function: a new closure for every call - the drone, you, each teammate, each
+-- sentry, every weapon record looked at - stopped LuaJIT from compiling these paths)
+local function unit_position_raw(id, want_axes)
     local obj, h = unit_object(id)
     if not obj then return nil end
     local pose = need(ptr_of(h, 136), 'unit pose')
@@ -57,7 +57,10 @@ function unit_position(id, want_axes)
       p.axes = axes
     end
     return p
-  end)
+end
+function unit_position(id, want_axes)
+  if not id or id == 0 then return nil end
+  local ok, pos = pcall(unit_position_raw, id, want_axes)
   return ok and pos or nil
 end
 
@@ -412,13 +415,34 @@ local reg_frame, reg_seen = -1, {}   -- enemies already looked up this frame
 
 -- the enemies one AI agent (a dog or a sentry) is currently considering, from its perception record. 'origin' is
 -- where distances (d2) are measured from. Also returns the raw record, for the research log.
-function read_candidates(pbase, origin, registry)
-  local perc = rd(pbase, 5112, 'perception record')
-  local fcount = u32(perc, 0)
+-- ((4.6.4 review) the perception record is read into one buffer kept for the whole session and parsed in place: before,
+-- every dog and busy sentry made a new 5 KB string every frame - about 1.5 MB a second of garbage with five out. Only
+-- what the groups and the three singles use (up to 4888 bytes) is read)
+local PERC_N = 4888
+local PBUF = ffi.new('uint8_t[?]', PERC_N)
+local pread, bu32, bf32
+do
+  local PV, PU32p, PF32p = ffi.typeof('const void *'), ffi.typeof('const uint32_t *'), ffi.typeof('const float *')
+  local NAN = 0 / 0
+  pread = function(addr)
+    return K32.SgdReadProcessMemory(PROCESS, ffi.cast(PV, addr), PBUF, PERC_N, DONE) ~= 0 and DONE[0] == PERC_N
+  end
+  bu32 = function(o) return tonumber(ffi.cast(PU32p, PBUF + o)[0]) end
+  bf32 = function(o) local v = tonumber(ffi.cast(PF32p, PBUF + o)[0]); if v == nil or v ~= v then return NAN end; return v end
+end
+-- ((4.6.4 release review) the same buffer for the Tesla Tower's pass right after the game's update (sentry_after),
+-- which made a new 5 KB string every frame while a tower was out)
+PERC = { read = function(addr) return pread(addr) end, u32 = function(o) return bu32(o) end, str = function(o, n) return ffi.string(PBUF + o, n) end }
+
+-- ((4.6.4 release review) 'want_header': the 264-byte faction list at its start as a string - only the Tesla Tower
+-- uses it; every other dog and sentry skipped making it each frame)
+function read_candidates(pbase, origin, registry, want_header)
+  need(type(pbase) == 'number' and pbase >= 65536 and pread(pbase), 'perception record')
+  local fcount = bu32(0)
   need(fcount <= 32, 'faction filter')
   local filter = 0
   for j = 0, fcount - 1 do
-    local f = u32(perc, 8 + j * 8)
+    local f = bu32(8 + j * 8)
     need(f < 32, 'faction id')
     filter = bit.bor(filter, bit.lshift(1, f))
   end
@@ -427,9 +451,9 @@ function read_candidates(pbase, origin, registry)
   local reg_list = ptr_of(read(registry + 73832, 8), 0)
   local candidates = {}
   local function add(off, group)
-    local id = u32(perc, off)
+    local id = bu32(off)
     if id == 0 then return end
-    local flags, faction, score = u32(perc, off + 72), u32(perc, off + 76), f32(perc, off + 68)
+    local flags, faction, score = bu32(off + 72), bu32(off + 76), bf32(off + 68)
     need(score == score and math.abs(score) < 100000, 'candidate score')
     local alive, ent = false, nil
     -- (the dog and every sentry mostly see the same enemies: each is looked up once per frame)
@@ -437,7 +461,7 @@ function read_candidates(pbase, origin, registry)
     local known = reg_seen[id]
     if known then alive, ent = known[1], known[2] or nil
     else
-      local ri = map_lookup(registry + 73808, id, 32768, reg_head)
+      local ri = map_lookup(registry + 73808, id, 32768, reg_head, true)
       if ri then
         need(ri < 16384, 'registry index')
         local rp = reg_rows[ri]
@@ -452,7 +476,7 @@ function read_candidates(pbase, origin, registry)
       end
       reg_seen[id] = { alive, ent or false }
     end
-    local x, y, z = f32(perc, off + 4), f32(perc, off + 8), f32(perc, off + 12)
+    local x, y, z = bf32(off + 4), bf32(off + 8), bf32(off + 12)
     local pos, d2
     if x == x and y == y and z == z and math.abs(x) < 1e6 and math.abs(y) < 1e6 and math.abs(z) < 1e6 then
       pos = { x, y, z }
@@ -460,21 +484,22 @@ function read_candidates(pbase, origin, registry)
     end
     candidates[#candidates + 1] = {
       id = id, pos = pos, d2 = d2, entry = pbase + off,
-      mask_addr = pbase + off + 76, mask = perc:sub(off + 77, off + 80), alive = alive and bit.band(flags, 1) ~= 0, score = score,
+      mask_addr = pbase + off + 76, mask = ffi.string(PBUF + off + 76, 4), alive = alive and bit.band(flags, 1) ~= 0, score = score,
       group = group, flags = flags, off = off, ent = ent, kind = ent and ent:sub(1, 8),
       -- the dog's own line of sight: set while it can see the enemy, cleared when cover blocks it; the
       -- float after it is how well it still remembers the enemy (1 = seen now, runs down to 0 over ~1 s)
-      visible = perc:byte(off + 49) ~= 0, memory = f32(perc, off + 64),
+      visible = PBUF[off + 48] ~= 0, memory = bf32(off + 64),
       eligible = alive and bit.band(flags, 1) ~= 0 and bit.band(faction, filter) ~= 0 and score > 0,
     }
   end
   for _, grp in ipairs(GROUPS) do
-    local c = u32(perc, grp[1])
+    local c = bu32(grp[1])
     need(c <= 16, 'candidate group')
     for k = 0, c - 1 do add(grp[2] + k * 80, grp[3]) end
   end
-  for _, one in ipairs(SINGLES) do if u32(perc, one[1] + 72) ~= 0 then add(one[1], one[2]) end end
-  return candidates, perc
+  for _, one in ipairs(SINGLES) do if bu32(one[1] + 72) ~= 0 then add(one[1], one[2]) end end
+  -- (the faction list at its start, for the Tesla Tower's filter and its test notes)
+  return candidates, want_header and ffi.string(PBUF, 264) or nil
 end
 
 
@@ -500,7 +525,15 @@ function read_state()
   local rec
   for attempt = 1, 2 do
     if not ctx or t >= ctx_until or attempt == 2 then
-      local c, why = locate()
+      -- ((4.6.4 review) a look that aborts on a failed read waits LOCATE_SECONDS too, like one that finds nothing:
+      -- before, a check that kept failing repeated the whole look - ~30 reads - every frame while a sentry was busy)
+      local okl, c, why = pcall(locate)
+      if not okl then
+        ctx = nil
+        locate_fail_until = t + LOCATE_SECONDS
+        locate_fail_why = type(c) == 'table' and c[1] == Abort and ('read_failed: ' .. tostring(c[2])) or 'read_failed'
+        error(c, 0)
+      end
       if not c then ctx = nil; locate_fail_until, locate_fail_why = t + LOCATE_SECONDS, why; return nil, why end
       ctx, ctx_until, unit_cache, reg_rows = c, t + LOCATE_SECONDS, {}, {}
     end
@@ -512,7 +545,7 @@ function read_state()
   local dog, rec_addr, pbase, registry = ctx.dog, ctx.rec_addr, ctx.pbase, ctx.registry
   local tstate = rd(ctx.tstate, 32, 'targeting state')
   local drone_pos = unit_position(ctx.drone_unit)
-  local candidates, perc = read_candidates(pbase, drone_pos, registry)
+  local candidates = read_candidates(pbase, drone_pos, registry)
 
   local now = u64(rd(ctx.clock + 24, 8, 'clock'), 0)
   need(now > 0 and now < 9007199254740991, 'clock')
@@ -540,7 +573,7 @@ function read_state()
     dog = dog, key = ctx.key,
     rec_addr = rec_addr, rec_head = rec:sub(1, 4), node = u32(rec, 8), target = target,
     synced = target ~= 0 and u32(tstate, 0) == target and rec:byte(121) == 1 and bit.band(u32(rec, 96), 1) ~= 0,
-    candidates = candidates, now = now, deadline = deadline, perc = perc,
+    candidates = candidates, now = now, deadline = deadline,
     player_pos = unit_position(ctx.player_unit, true), drone_pos = drone_pos, fire_node = fire_node, fire_pose = fire_pose,
     -- (4.5.3 Test 12) where the game aims the dog's gun (its targeting state; already read): the laser's fallback
     -- points there, and test builds check the beam against it (only built with a fire node: nothing else uses it)

@@ -28,6 +28,9 @@ local PATTERNS = {
   exe_units = { { p = '488905????????488d95c801000041b858010000', disp_at = 3, size = 7 }, { p = '488b3d????????4c8b35????????4885ff', disp_at = 3, size = 7 }, { p = '48892d????????4885ff74??488b0733d2488b35????????', disp_at = 3, size = 7 } },
 }
 -- known build (game.dll 2E2C3B7C / exe F5FEE03D, 2026-09-24 patch): addresses are RVAs
+-- (4.6.4 review) dll_stamp/exe_stamp: the modules' PE time stamp and image size, checked first so a known build needs
+-- no hashing of ~135 MB of game files at every start
 local KNOWN = { dll_hash = '2E2C3B7C2500646DADD5F2B4C6E0504DBB7E7896139F64CDDC0D1813C718F51E', exe_hash = 'F5FEE03DCFDB2E553A4752C283590950AC13316B376D8196AA556FF0400D5F06',
+  dll_stamp = '1790161983/74727424', exe_stamp = '1790149348/60719104',
   globals = { mission = 53634720, players = 53634152, owners = 54968216, equipment = 53634872, backpacks = 53634536, attachments = 53636544, targeting = 53636400, behaviours = 53634880, perception = 53634376, registry = 53636280, clock = 53633864, weapons = 53636320, heatbar = 53636424 },
   owner_index = 15871688, owner_rows = 15937304, stride = 504, exe_units = 27328752, laser_behaviour = 190 }

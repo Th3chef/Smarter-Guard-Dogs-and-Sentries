@@ -161,7 +161,7 @@ function research_frame(st)
     if cur then
       rwrite(string.format('S %.2f %s %d %d %s %s %08x %.3f %.1f %.1f %s %s', t - research.t0, st.dog.name, st.node, st.target,
         type_of(cur), cur.group or '?', cur.flags or 0, cur.score or 0, dist(cur.pos, D), dist(cur.pos, me),
-        st.synced and 1 or 0, hex(st.perc:sub(cur.off + 17, cur.off + 68))) .. string.format(' dock %.1f', (me and D) and math.sqrt((D[1] - me[1]) ^ 2 + (D[2] - me[2]) ^ 2) or -1)
+        st.synced and 1 or 0, hex(read(cur.entry + 16, 52) or '')) .. string.format(' dock %.1f', (me and D) and math.sqrt((D[1] - me[1]) ^ 2 + (D[2] - me[2]) ^ 2) or -1)
         .. ((laser.last_gun and laser.last_to) and string.format(' barrel_off %.2f %.2f', laser.last_gun[3] - laser.last_to[3],
           math.sqrt((laser.last_gun[1] - laser.last_to[1]) ^ 2 + (laser.last_gun[2] - laser.last_to[2]) ^ 2)) or ''))
     else

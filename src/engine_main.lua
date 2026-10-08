@@ -4,6 +4,7 @@
 local next_poll, next_log, last_log, broken = 0, 0, 0, false
 local last_poll_t
 local sentry_broken, sentry_last_error = false, nil
+local error_repeats = 0   -- (4.6.4 review: the same read error again, counted instead of logged again)
 -- (4.5.3) Bingus' Mod Options Menu (optional, needs Bingus Shared Loader v18+): the same options as in the mod manager
 -- (Arsenal), in the same order, with the same names, choices and texts, under ESC > MODS > SMARTER GUARD DOGS &
 -- SENTRIES; an option with sub-options gets 'Off' first, then its sub-options (as in Armored Overhaul's rows). Each sets the same flags as the
@@ -94,9 +95,17 @@ end
 local function tick()
   local t = os.clock()
   FRAME = FRAME + 1
-  if not SGD.seaf_only then menu_step() end
+  -- (4.6.4) CowboyBingus's Laser Sentry Cooldown (it keeps an overheated Laser Sentry from exploding: it cools down and
+  -- comes back): noted once - both work together, this mod still stands the sentry down before it overheats
+  if not SGD.lsc_seen and FRAME % 120 == 1 and rawget(_G, 'LaserSentryCooldownInstalled') then
+    SGD.lsc_seen = true
+    note('Laser Sentry Cooldown (CowboyBingus) is installed: works alongside it (an overheated Laser Sentry cools down and comes back; this mod still cools it before it overheats)')
+  end
+  menu_step()
   -- the log is rewritten every 10 s, and within a second of anything new being noted
-  if t >= next_log or (session.dirty and t - last_log >= 1) then next_log, last_log = t + 10, t; write_log() end
+  -- ((4.6.4 review) a change is written within 3 s, not every second: each rewrite is a whole file on the game thread;
+  -- errors and shutdown still write at once)
+  if t >= next_log or (session.dirty and t - last_log >= 3) then next_log, last_log = t + 10, t; write_log() end
   -- (test builds: F8 also works while no dog is out, e.g. right after you died; checked every frame so a quick
   -- press isn't missed between the slower polls)
   if TESTER and SGD.status ~= 'active' then pcall(check_marker, nil) end
@@ -108,9 +117,7 @@ local function tick()
   next_poll = t + 0.1          -- relaxed while nothing is going on; every frame while a dog is out (below)
   stats.polls = stats.polls + 1
   local ok, st, why
-  -- (the Smarter SEAF build: no dog; its status is only whether you are in a mission)
-  if SGD.seaf_only then ok, st, why = pcall(function() return nil, in_mission() and 'in a mission' or 'not in a mission' end)
-  else ok, st, why = pcall(read_state) end
+  ok, st, why = pcall(read_state)
   if not ok then
     local e = st
     st = nil
@@ -123,10 +130,21 @@ local function tick()
       sentry_broken = true; pcall(sentry_restore)
     end
     stats.read_errors = stats.read_errors + 1
+    -- ((4.6.4 review) the same error again: counted, not logged again - a check that kept failing filled the recent
+    -- events and the first-10 error list with copies and rewrote the log every second)
+    if why == last_error then
+      error_repeats = error_repeats + 1
+    else
+      if error_repeats > 0 then event(string.format('(the last error repeated %d more time(s))', error_repeats)) end
+      error_repeats = 0
+      event('error: ' .. tostring(why))
+      pcall(write_log); last_log = t   -- (a new error is in the log at once)
+    end
     last_error = why
-    event('error: ' .. tostring(why))
   end
   local status = st and 'active' or why
+  -- ((4.6.4 review) out of a mission: forget the laser's per-world objects - see laser.forget)
+  if why == 'not in a mission' and (next(laser.worlds) or (laser.glow and next(laser.glow.guis))) then laser.forget() end
   local dogname = st and st.dog.name or nil
   if status ~= SGD.status then event('status: ' .. tostring(status)) end
   if dogname and dogname ~= SGD.dog then event('dog: ' .. dogname) end
@@ -202,7 +220,9 @@ if type(game_update) ~= 'function' then
   SGD.status = 'off: game update function not found'; write_log(); return
 end
 do
-  -- (after the game's update: the Tesla Tower's hidden helldivers are hidden again, see sentry_after)
+  -- (after the game's update: the Tesla Tower's hidden helldivers are hidden again, see sentry_after. 4.6.4 Test 9
+  -- tried the same for every sentry and the dog: in game it never found one shown again - the game shows hidden
+  -- entries again later in the frame, after this hook - so it was taken out)
   local function after(...)
     if not broken and not sentry_broken then pcall(sentry_after) end
     return ...
@@ -232,7 +252,14 @@ do
   rawset(_G, 'update', function(...)
     local ok2, e
     if SGD.time_tick then ok2, e = SGD.time_tick() else ok2, e = pcall(tick) end
-    if not ok2 then broken = true; last_error = 'tick: ' .. tostring(e); pcall(restore); pcall(sentry_restore) end
+    if not ok2 then
+      -- ((4.6.4 review) said so in the log too: before, it kept saying 'status: active' while nothing ran any more)
+      if not broken then
+        local why = 'stopped after error: tick: ' .. tostring(e)
+        SGD.status = why; pcall(event, 'error: ' .. why)
+      end
+      broken = true; sentry_broken = true; last_error = 'tick: ' .. tostring(e); pcall(restore); pcall(sentry_restore)
+    end
     return after(game_update(...))
   end)
 end

@@ -95,16 +95,17 @@ do
 end
 
 -- every world the engine reports right now (re-read each frame, so a closed world is never touched again)
+local ONE_WORLD = {}   -- ((4.6.4 review) the usual answer, one table kept: nothing is made on the frames it is asked)
 local function live_worlds()
   local A = SR and SR.Application
   if type(A) ~= 'table' then return nil, 'no stingray.Application' end
+  if type(A.main_world) == 'function' then
+    local ok, w = pcall(A.main_world)
+    if ok and w ~= nil then laser.world_source = 'main_world()'; ONE_WORLD[1] = w; return ONE_WORLD end
+  end
   local list, seen = {}, {}
   local function add(w) if w ~= nil and not seen[w] then seen[w] = true; list[#list + 1] = w end end
   local src = {}
-  if type(A.main_world) == 'function' then
-    local ok, w = pcall(A.main_world)
-    if ok and w ~= nil then laser.world_source = 'main_world()'; return { w } end
-  end
   if type(A.worlds) == 'function' then
     local ok, ws = pcall(A.worlds)
     if ok and type(ws) == 'table' then for _, w in pairs(ws) do add(w) end; src[#src + 1] = 'worlds()' end
@@ -167,9 +168,8 @@ end
 -- the set of rings changes and otherwise just drawn again, instead of 40-80 lines rebuilt every frame. redraw: nothing
 -- new this frame (the mod is checking only a few times a second, idle sentries): both line objects are drawn again as
 -- they are. An empty list clears everything
-local function laser_draw(beams, redraw)
-  if not laser_ready() then return end
-  local ok, err = pcall(function()
+-- ((4.6.4 review) the drawing in a named function, called through pcall: a new closure every frame before)
+local function laser_draw_body(beams, redraw)
     local worlds, why = live_worlds()
     if not worlds then
       if laser.wait_reason ~= why then laser.wait_reason = why; event('laser waiting: ' .. tostring(why)) end
@@ -261,8 +261,19 @@ local function laser_draw(beams, redraw)
     end
     laser.worlds, laser.ring_lo = keep, keep_r   -- line objects of worlds that went away are simply forgotten, never touched
     if not redraw then laser.has = #beams > 0 or rings ~= nil end
-  end)
+end
+local function laser_draw(beams, redraw)
+  if not laser_ready() then return end
+  local ok, err = pcall(laser_draw_body, beams, redraw)
   if not ok then laser_fail(err) end
+end
+
+-- ((4.6.4 review) out of a mission: the line objects and world GUIs kept per world are dropped without being touched -
+-- their worlds are gone, and a new mission's world could come back at the same address, where using a stale one would
+-- crash the game)
+laser.forget = function()
+  laser.worlds, laser.ring_lo, laser.has, laser.ring_sig = {}, {}, false, nil
+  if laser.glow then laser.glow.guis, laser.glow.ids, laser.glow.last = {}, {}, nil end
 end
 
 local function laser_clear()
@@ -439,8 +450,17 @@ do
   end
   -- redraw: a frame the mod skipped (idle sentries) - the last frame's beams again (an immediate GUI draws only what it
   -- is given each frame)
+  -- ((4.6.4 review) a retained GUI keeps its last triangles: with the glow off they go now, not left on screen)
+  G.clear = function()
+    if G.immediate then return end
+    for w, ids in pairs(G.ids) do
+      local g = G.guis[w]
+      if g then for _, id in ipairs(ids) do pcall(SR.Gui.destroy_triangle, g, id) end end
+      G.ids[w] = {}
+    end
+  end
   G.draw = function(w, beams, redraw)
-    if not G.on() then return end
+    if not G.on() then if next(G.ids) then G.clear() end; return end
     -- (a retained GUI still holds the last frame's triangles: nothing to do on a redraw)
     if redraw and G.guis[w] and not G.immediate then return end
     if redraw then beams = G.last or beams else G.last = beams end
