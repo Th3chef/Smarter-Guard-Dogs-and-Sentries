@@ -3,7 +3,7 @@
 -- Research recorder (1.5 test builds): writes SmarterGuardDogsAndSentries-research.log next to the
 -- status log (%LOCALAPPDATA%\CowboyBingus\Helldivers2\Logs) with what the
 -- dog targets, each enemy's unit type and the raw fields of its perception entry, so line-of-sight and
--- armour rules can be worked out from real missions. Reads only. Press F8 in game to drop a marker line
+-- armor rules can be worked out from real missions. Reads only. Press F8 in game to drop a marker line
 -- ("MARK") at a moment worth looking at, e.g. the dog shooting through a wall or at a Hulk.
 -- ======================================================================================================
 local RESEARCH = false
@@ -100,7 +100,7 @@ function check_marker(st)
     table.sort(rows, function(a, b) return a.d < b.d end)
     for i = 1, math.min(#rows, 16) do
       local c, why = rows[i].c, {}
-      for _, k in ipairs({ 'unsafe', 'cover', 'armour', 'range', 'no_shot', 'closer_threat', 'focus' }) do
+      for _, k in ipairs({ 'unsafe', 'cover', 'armor', 'range', 'no_shot', 'closer_threat', 'focus' }) do
         if st.hide_sets and st.hide_sets[k] and st.hide_sets[k][c.id] then
           why[#why + 1] = (k == 'unsafe' and st.unsafe_why and (st.unsafe_why[c.id] or ''):find('teammate')) and 'unsafe(teammate)' or k
         end

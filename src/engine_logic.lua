@@ -7,7 +7,7 @@
 local SAFE, dot3, segment_distance, M, TEAM, P, PRIORITY, union, plan, BLANK, hidden, hider_restore, hider_apply, restore, apply, steer
 do
 local FAST = { fire = 0.15, lock = 0.5, recent = 8, recent_seconds = 3.0, near = 20, reach = 35 }
--- The Rover spreads its fire: once an enemy is alight it moves on to one within 'reach' metres that it hasn't
+-- The Rover spreads its fire: once an enemy is alight it moves on to one within 'reach' meters that it hasn't
 -- set alight in the last 'recent_seconds' (it remembers its last 'recent' targets). Only when there is no such
 -- enemy (the last one nearby, or every other one already burning) does it keep firing at the one it is on.
 SAFE = { body_bottom = 0.2, body_top = 1.75, aim_heights = { 0.0, 0.5 } }
@@ -261,12 +261,12 @@ local function pick_other(st, U, t, from)
   return best
 end
 
-PRIORITY = { range = 25, band = 3, linger = 0.4, urgent = 10 }   -- metres from you / extra metres / seconds /
--- while the dog is already shooting, it is only pulled off for a closer enemy that is within 'urgent' metres of you;
+PRIORITY = { range = 25, band = 3, linger = 0.4, urgent = 10 }   -- meters from you / extra meters / seconds /
+-- while the dog is already shooting, it is only pulled off for a closer enemy that is within 'urgent' meters of you;
 -- otherwise it finishes its burst and its next pick (within a second) is the closer one
 local COVER = true            -- hide enemies the dog has lost sight of
 local BURST = { fire = 1.0, rest = 3.0 }   -- Guard Dog vs Heavy Devastators: fire this long, then leave it this long
-local RANGE_SLACK = 2         -- metres past a dog's range before an enemy counts as out of range
+local RANGE_SLACK = 2         -- meters past a dog's range before an enemy counts as out of range
 local COVER_GRACE = 0.6       -- ...but its current target only once it has been out of sight ~0.4 s (the game's
                               -- memory of it runs from 1 down to 0 in about a second), so an enemy that just
                               -- passes behind something for a moment doesn't make the dog start over
@@ -392,7 +392,7 @@ function plan(st)
   end
   for id, seen in pairs(P.unsafe_seen) do if t - seen >= (st.dog.linger or UNSAFE_LINGER) then P.unsafe_seen[id] = nil end end
 
-  -- enemies it cannot hurt (too heavily armoured) and enemies it cannot see (behind cover): hidden while they
+  -- enemies it cannot hurt (too heavily armored) and enemies it cannot see (behind cover): hidden while they
   -- are, so the dog spends its ammo on what it can actually hit. The game refreshes line of sight about
   -- twice a second, so an enemy stepping out of cover comes back within half a second.
   local N, C = {}, {}
@@ -498,7 +498,7 @@ function plan(st)
     for _, c in ipairs(st.candidates) do if c.id ~= st.target and (c.eligible or c.mask == '    ') then focus[c.id] = true end end
   end
   local hide = union(U, F, N, C, R, S, focus)
-  st.hide_sets = { unsafe = U, closer_threat = F, armour = N, cover = C, range = R, no_shot = S, focus = focus }
+  st.hide_sets = { unsafe = U, closer_threat = F, armor = N, cover = C, range = R, no_shot = S, focus = focus }
   -- a re-selection we asked for is still pending: keep the same enemies hidden until the target changes
   -- (4.6.4 review: not while its target has become unsafe - a hold for another reason must never delay a safety stop)
   if P.hold and st.target == P.hold.target and t < P.hold.until_t
@@ -518,12 +518,14 @@ function plan(st)
   local function kick(block, reason)
     -- a repeat for the same target means the dog ignored the last redirect
     -- (a nudge after a kill, with no target set, doesn't count: there is nothing to have ignored)
-    if st.target ~= 0 and P.kicked == st.target then P.ignored = P.ignored + 1 else P.kicked, P.ignored = st.target, 0 end
-    if P.ignored >= 2 then
+    -- ((4.6.6 review) the same ask again: another reason starts the count over, and a safety stop never backs off - it
+    -- is asked again every HOLD_SECONDS while the target is unsafe, as a back-off left the dog free to fire through you)
+    if st.target ~= 0 and P.kicked == st.target and P.kick_reason == reason then P.ignored = P.ignored + 1 else P.kicked, P.ignored, P.kick_reason = st.target, 0, reason end
+    if P.ignored >= 2 and not reason:find('^safety') then
       -- it keeps ignoring us: keep the enemies hidden but stop forcing re-selection for a while
       P.kicked, P.ignored = nil, 0
       if reason == 'cannot_hurt' then
-        -- some enemies (seen with armoured striders) stay the dog's target however often we hide them; pulling
+        -- some enemies (seen with armored striders) stay the dog's target however often we hide them; pulling
         -- it off again and again only makes it start over each time, so stop redirecting it off that one (it
         -- stays hidden, so the dog still drops it whenever the game lets it)
         P.stuck[st.target] = true
@@ -807,7 +809,7 @@ local function note_action(st, req)
     for _, x in ipairs(st.candidates) do if x.id == st.target then c = x end end
     local a = c and c.kind and ARMOR[c.kind]
     event(string.format('%s%s: %s (target %d%s, AI step %d, on it %.1fs%s)', READ_ONLY and 'would ' or '', req.reason, st.dog.name, st.target,
-      a and (', ' .. a.name .. ', armour ' .. a.av) or '', st.node, st.target_for or 0,
+      a and (', ' .. a.name .. ', armor ' .. a.av) or '', st.node, st.target_for or 0,
       c and c.pos and st.player_pos and string.format(', %.0f m from you', math.sqrt((c.pos[1] - st.player_pos[1]) ^ 2 + (c.pos[2] - st.player_pos[2]) ^ 2)) or ''))
     return
   end
