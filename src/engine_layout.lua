@@ -127,14 +127,14 @@ local function scan_layout(game, exe, dll_hash, exe_hash)
     local ok, v = pcall(target, text, rva, pats, name)
     if ok then L.globals[name] = v else note('optional game address not found (' .. name .. '): ' .. tostring(v)) end
   end
-  L.stride = su32(text, at(PATTERNS.stride, 'behaviour stride') + 5)
+  L.stride = su32(text, at(PATTERNS.stride, 'behavior stride') + 5)
   L.owner_index = su32(text, at(PATTERNS.owner_index, 'owner map') + 3) - 8
   L.owner_rows = su32(text, at(PATTERNS.owner_rows, 'owner entities') + 10) - 8
-  -- the laser drones' AI behaviour id: the dispatcher case that calls the laser drone handler
+  -- the laser drones' AI behavior id: the dispatcher case that calls the laser drone handler
   -- ((4.6.4 review) all of it in a pcall with the jump table bounds-checked: if it fails after a patch, the last known
   -- id is used instead of turning the whole mod off)
   local okd, whyd = pcall(function()
-    local d = at(PATTERNS.dispatch.p, 'behaviour dispatcher')
+    local d = at(PATTERNS.dispatch.p, 'behavior dispatcher')
     local count, tbl = su32(text, d + PATTERNS.dispatch.count_at), su32(text, d + PATTERNS.dispatch.table_at)
     local handler = find_once(text, PATTERNS.laser_fn)
     if handler and count < 4096 then
@@ -150,8 +150,8 @@ local function scan_layout(game, exe, dll_hash, exe_hash)
       end
     end
   end)
-  if not okd then L.laser_behaviour = nil; note('laser behaviour scan failed: ' .. tostring(whyd)) end
-  if not L.laser_behaviour then note('laser behaviour not identified; using the last known id'); L.laser_behaviour = KNOWN.laser_behaviour end
+  if not okd then L.laser_behaviour = nil; note('laser behavior scan failed: ' .. tostring(whyd)) end
+  if not L.laser_behaviour then note('laser behavior not identified; using the last known id'); L.laser_behaviour = KNOWN.laser_behaviour end
   text = nil
   local etext, erva = code_section(exe)
   L.exe_units = target(etext, erva, PATTERNS.exe_units, 'exe units')
@@ -177,13 +177,29 @@ local function pe_stamp(module)
 end
 
 -- (the mod's version and its pattern set: a cached scan from another version of the mod is scanned again)
+-- ((4.6.6 review) and a checksum of the patterns themselves: a test build with changed pattern bytes shares the version
+-- number, and reused the previous build's cached addresses without running its own patterns)
+local function canonical(v)
+  if type(v) ~= 'table' then return tostring(v) end
+  local keys = {}
+  for k in pairs(v) do keys[#keys + 1] = k end
+  table.sort(keys, function(a, b) return tostring(a) < tostring(b) end)
+  local out = {}
+  for _, k in ipairs(keys) do out[#out + 1] = tostring(k) .. '=' .. canonical(v[k]) end
+  return '{' .. table.concat(out, ',') .. '}'
+end
 local function cache_tag()
   local names = {}
   for k in pairs(PATTERNS.globals) do names[#names + 1] = k end
   for k in pairs(PATTERNS.optional or {}) do names[#names + 1] = k end
   table.sort(names)
+  local s, h = canonical(PATTERNS), 0x811c9dc5          -- FNV-1a, 32 bits
+  for i = 1, #s do
+    local x = bit.bxor(h, s:byte(i)) % 4294967296           -- (16777619 = 2^24 + 403, split so the double stays exact)
+    h = (x * 16777216 % 4294967296 + x * 403) % 4294967296
+  end
   -- ((4.6.4 release review) the plain version number: the release and its Tester share a scan)
-  return (VERSION:match('^[%d%.]+') or VERSION) .. '|' .. table.concat(names, ',')
+  return (VERSION:match('^[%d%.]+') or VERSION) .. '|' .. bit.tohex(h) .. '|' .. table.concat(names, ',')
 end
 
 local function resolve_layout()
@@ -191,41 +207,56 @@ local function resolve_layout()
   assert(game ~= nil and exe ~= nil, 'game modules not loaded')
   local gst, est = pe_stamp(game), pe_stamp(exe)
   local L, gsha, esha
+  local cache = CACHEDIR and (CACHEDIR .. '\\SmarterGuardDogsAndSentries.cache')
+  -- the cached scan, when it is complete and from this version of the mod ((4.6.4 review) with every required address)
+  local function cached()
+    local f = cache and io.open(cache, 'r')
+    if not f then return nil end
+    local src = f:read('*a'); f:close()
+    local fn = loadstring and loadstring('return ' .. src)
+    local ok, c = pcall(fn or error)
+    if not (ok and type(c) == 'table') then return nil end
+    local whole = type(c.globals) == 'table'
+    if whole then for k in pairs(PATTERNS.globals) do if not c.globals[k] then whole = false end end end
+    return c, whole and c.mod == cache_tag()
+  end
   if gst and est and gst == KNOWN.dll_stamp and est == KNOWN.exe_stamp then
     -- (a known build, by its stamps: no hashing)
     gsha, esha = KNOWN.dll_hash, KNOWN.exe_hash
     note('game.dll ' .. gsha:sub(1, 16) .. '  exe ' .. esha:sub(1, 16) .. ' (by stamp)')
   else
-    gsha, esha = file_sha256(game), file_sha256(exe)
-    note('game.dll ' .. gsha:sub(1, 16) .. '  exe ' .. esha:sub(1, 16))
+    -- ((4.6.6 review) a cached scan of this build, by its stamps: no hashing either - before, every start after a game
+    -- patch hashed both files, about 135 MB, until a mod update knew the new build)
+    local c, usable = cached()
+    if c and usable and gst and est and c.dll_stamp == gst and c.exe_stamp == est then
+      L, gsha, esha = c, c.dll_hash, c.exe_hash
+      note('game.dll ' .. tostring(gsha):sub(1, 16) .. '  exe ' .. tostring(esha):sub(1, 16) .. ' (by stamp, cached)')
+    else
+      gsha, esha = file_sha256(game), file_sha256(exe)
+      note('game.dll ' .. gsha:sub(1, 16) .. '  exe ' .. esha:sub(1, 16))
+    end
   end
-  if gsha == KNOWN.dll_hash and esha == KNOWN.exe_hash then
+  if L then
+    note('layout: cached scan of this game version')
+  elseif gsha == KNOWN.dll_hash and esha == KNOWN.exe_hash then
     L = KNOWN; note('layout: built-in (known game version)')
   else
-    local cache = CACHEDIR and (CACHEDIR .. '\\SmarterGuardDogsAndSentries.cache')
-    local f = cache and io.open(cache, 'r')
-    if f then
-      local src = f:read('*a'); f:close()
-      local fn = loadstring and loadstring('return ' .. src)
-      local ok, c = pcall(fn or error)
-      -- ((4.6.4 review) and from this version of the mod, with every required address in it)
-      local whole = ok and type(c) == 'table' and type(c.globals) == 'table'
-      if whole then for k in pairs(PATTERNS.globals) do if not c.globals[k] then whole = false end end end
-      if whole and c.dll_hash == gsha and c.exe_hash == esha and c.mod == cache_tag() then L = c; note('layout: cached scan of this game version')
-      elseif ok and type(c) == 'table' and c.dll_hash == gsha then note('layout: the cached scan is from another version of the mod') end
-    end
+    local c, usable = cached()
+    if c and usable and c.dll_hash == gsha and c.exe_hash == esha then L = c; note('layout: cached scan of this game version')
+    elseif c and c.dll_hash == gsha then note('layout: the cached scan is from another version of the mod') end
     if not L then
       note('layout: new game version, scanning game code...')
       L = scan_layout(game, exe, gsha, esha)
       L.mod = cache_tag()
+      L.dll_stamp, L.exe_stamp = gst, est      -- ((4.6.6 review) so the next start finds it without hashing)
       if cache then local w = io.open(cache, 'w'); if w then w:write(serialize(L)); w:close() end end
     end
   end
   -- absolute addresses
   local gbase, ebase = tonumber(ffi.cast('uintptr_t', game)), tonumber(ffi.cast('uintptr_t', exe))
   local A = { stride = L.stride, owner_index = L.owner_index, owner_rows = L.owner_rows, laser_behaviour = L.laser_behaviour,
-    exe_units = ebase + L.exe_units, g = {} }
+    exe_units = ebase + L.exe_units, g = {}, gbase = gbase }
   for k, v in pairs(L.globals) do A.g[k] = gbase + v end
-  note(string.format('laser behaviour %d, guard dog behaviour %d', L.laser_behaviour, L.laser_behaviour + 1))
+  note(string.format('laser behavior %d, guard dog behavior %d', L.laser_behaviour, L.laser_behaviour + 1))
   return A
 end

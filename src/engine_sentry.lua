@@ -2,7 +2,7 @@
 -- ======================================================================================================
 -- Sentries (4.0): your sentries get the same treatment as the dogs where it fits. They never fire through you or
 -- (optionally) your teammates - including while they swing round to their next target - the mortars never pick an
--- enemy standing next to someone, the machine gun and Gatling sentries skip armour they can't hurt, and the
+-- enemy standing next to someone, the machine gun and Gatling sentries skip armor they can't hurt, and the
 -- targeting laser shows what each one is aiming at. Like the dogs, a sentry is only ever steered by hiding enemies
 -- from it (their faction mask in its own perception record) and by asking it to choose again (its selection
 -- timer). Nothing else of the sentry is touched, so mods that change how sentries aim or fire keep working.
@@ -25,8 +25,8 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
   local LASER_FIRING_HOLD = 0.25
   local BEAM_SMOOTH = 0.06           -- seconds: how quickly a sentry's laser end catches up with where it should point
   local FIRE_NODE = 12              -- the AI step in which most sentries fire (the Laser Sentry: its fire_node, 13)
-  local AIM_UP = { 0.3, 1.0 }       -- where on an enemy the shots may land (metres above its base)
-  local BODY_MID = 0.9              -- the middle of a body (metres above its feet): for explosions
+  local AIM_UP = { 0.3, 1.0 }       -- where on an enemy the shots may land (meters above its base)
+  local BODY_MID = 0.9              -- the middle of a body (meters above its feet): for explosions
   local MUZZLE_UP = 1.2             -- if the muzzle can't be read: this far above the sentry's base
   -- (turns under 10 degrees are left to the line check: a sentry's barrel wanders a few degrees around its aim
   -- while tracking, and counting that as a turn made the Laser Sentry drop enemies it was already on)
@@ -35,10 +35,10 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
   -- for other kinds whose turns are checked (the Flame Sentry) it is learned while it fires at enemies in plain view
   -- (the part's axis that tracks its aim point best); until then the turn check waits
   local BARREL = { frames = 30, min_cos = 0.97, tries = 4 }
-  -- priority (Target Prioritization): by armour, the rocket and autocannon sentries go for armoured (Heavy or more)
-  -- enemies first, the machine gun, Gatling and Laser sentries for unarmoured ones; by distance (4.6.1, prefer = 'near',
-  -- the Flame Sentry), the closest first. Only enemies in sight within 'reach' metres count, and an enemy within
-  -- 'near_you' metres of a helldiver is never pushed back (it is the threat right now).
+  -- priority (Target Prioritization): by armor, the rocket and autocannon sentries go for armored (Heavy or more)
+  -- enemies first, the machine gun, Gatling and Laser sentries for unarmored ones; by distance (4.6.1, prefer = 'near',
+  -- the Flame Sentry), the closest first. Only enemies in sight within 'reach' meters count, and an enemy within
+  -- 'near_you' meters of a helldiver is never pushed back (it is the threat right now).
   -- (4.6.4 wiki check: reach 80 -> 100, the Autocannon and Rocket sentries' range)
   local PRIORITY = { reach = 100, near_you = 8, calm = 0.5, closer = 3, closer_keep = 4 }
   -- (4.6.1) prefer = 'near' (the Flame Sentry): no armor tiers - an enemy more than 'closer' m further from its muzzle
@@ -57,23 +57,26 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
   -- enemies still aboard a dropship: within 'reach' m of it sideways, from 'below' m under it to 'above' m over it,
   -- and at least 'above_sentry' m higher than the sentry (so troops it has already set down don't count)
   local DROPSHIP = { reach = 14, below = 12, above = 4, above_sentry = 5 }
-  -- self-defence: enemies within 'reach' m of the sentry come before every priority rule (gunships included)
+  -- self-defense: enemies within 'reach' m of the sentry come before every priority rule (gunships included)
   local SELF = { reach = 8 }
   local RANGE_KEEP = 2                -- (4.5.2) a sentry with a 'range' keeps its current target until it is this much further out (m)
   -- fire spreading (Laser Sentry, like the Rover): its beam sets enemies alight and the burn does most of the damage,
   -- so once one is burning ('fire' seconds of beam, or 'lock' seconds on it without) it moves on to the unlit enemy
   -- nearest you within 'reach'. Enemies it lit in the last 'burn' seconds are left to burn while unlit ones are
   -- about. When everything near is already burning it holds its beam (and its heat) unless a burning enemy is
-  -- within 'near_you' metres of a helldiver.
+  -- within 'near_you' meters of a helldiver.
   -- (4.6.2) spreads_fire = 'keep' (the Flame Sentry, a tester's call): the same, but a burning enemy next to a
   -- helldiver is never left, it is left only for an unlit one at most PRIORITY.closer_keep m farther away (closer
   -- ones first), and when everything near is burning it keeps firing (no holding back)
-  local SPREAD = { fire = 0.3, lock = 1.0, burn = 3.0, reach = 50, near_you = 10 }
+  -- (4.6.6 Test 4, the author: the Laser Sentry redirected constantly and ignored enemies close by) the Laser Sentry
+  -- ('laser_*'): half a second of beam (1 s on it; Test 5, the author: 1 s was too long) before it moves on, burning enemies within 'laser_near' m of you or
+  -- of the sentry are never skipped, and when everything in reach is burning it keeps firing instead of holding
+  local SPREAD = { fire = 0.3, lock = 1.0, burn = 3.0, reach = 50, near_you = 10, laser_fire = 0.5, laser_lock = 1.0, laser_near = 15 }
   -- Gunships come before everything else for the Gatling, autocannon, rocket and Laser sentries ('air_first')
   -- (Automaton Gunship; Illuminate Stingray)
   local AIR_FIRST = { [type_hash('282eb766c1ffa6a1')] = true, [type_hash('19e18b46ec55d94a')] = true }
-  -- 1 = armoured, 0 = unarmoured; gunships rank above all ('air'). Every sentry has at least Medium penetration, so
-  -- for them 'armoured' means Heavy (AV4) or more: Light and Medium enemies count as unarmoured
+  -- 1 = armored, 0 = unarmored; gunships rank above all ('air'). Every sentry has at least Medium penetration, so
+  -- for them 'armored' means Heavy (AV4) or more: Light and Medium enemies count as unarmored
   local function armour_tier(c, heavy, air)
     if air and c.kind and AIR_FIRST[c.kind] then return heavy and 2 or -1 end
     local a = c.kind and ARMOR[c.kind]
@@ -110,11 +113,30 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
   -- (4.5.3: declared here, defined further down - forget() calls it; before, it called an undefined global and a Tesla
   -- Tower the mod let go of kept its rewritten target list: switching it off mid-mission left it picking nothing new)
   local tesla_unfilter
-  local function forget(id, s, why)
+  local records_current              -- ((4.6.6 review) declared here too: forget() checks it; defined further down)
+  -- ((4.6.6 review) the hidden entries' bookkeeping, moved to where the game copied the record to (its swap-remove copies
+  -- the record, hidden masks and all): each entry keeps its place in the record; hider_apply checks every one by its
+  -- enemy id and adopts or drops the rest)
+  local function shift_hidden(H, d)
+    if d == 0 then return H end
+    local out = {}
+    for addr, h in pairs(H) do
+      if addr < 0 then out[addr] = h else out[addr + d] = { id = h.id, entry = h.entry + d, before = h.before } end
+    end
+    return out
+  end
+  local function forget(id, s, why, force)
     s.spare_ids = nil
-    pcall(hider_restore, s.H)
+    -- ((4.6.6 review) its hidden entries are put back only while its records are still its own (or when the option is
+    -- turned off): a record the game moved may now hold another agent, and a moved copy keeps the hidden masks, so
+    -- the bookkeeping is kept for when the sentry is found again)
+    local own = force
+    if not own and not s.moved then local okc, cur = pcall(records_current, s); own = okc and cur end
+    local keep
+    if own then pcall(hider_restore, s.H) elseif next(s.H) then keep = s.H end
     pcall(tesla_unfilter, s)
-    remembered[id] = { heat = s.heat, heat_measured = s.heat_measured, P = s.P, tag = s.tag, t = os.clock(), name = s.def.name, unit = s.unit, why = why }
+    remembered[id] = { heat = s.heat, heat_measured = s.heat_measured, P = s.P, tag = s.tag, t = os.clock(), name = s.def.name, unit = s.unit, why = why,
+      H = keep, pbase = s.pbase }
     sentries[id] = nil
   end
   local function carry_over(ns, old, t)
@@ -139,10 +161,10 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
     need(map_lookup(targeting + 336, f.id, 16384) == f.slot, 'sentry targeting slot')
     local bi = map_lookup(behaviours + 64, f.id, 32768)
     if not bi then return nil, 'no AI record yet' end
-    need(bi < 16384, 'sentry behaviour index')
-    need(rptr(rptr(behaviours + 88, 'behaviour owners') + bi * 8, 'behaviour owner') == f.ptr, 'sentry behaviour owner')
-    local rec_addr = rptr(behaviours + 96, 'behaviour records') + bi * A.stride
-    local rec = rd(rec_addr, 160, 'sentry behaviour record')
+    need(bi < 16384, 'sentry behavior index')
+    need(rptr(rptr(behaviours + 88, 'behavior owners') + bi * 8, 'behavior owner') == f.ptr, 'sentry behavior owner')
+    local rec_addr = rptr(behaviours + 96, 'behavior records') + bi * A.stride
+    local rec = rd(rec_addr, 160, 'sentry behavior record')
     local ai = u32(rec, 0)
     if f.def.ai and ai ~= f.def.ai and not (f.def.ais and f.def.ais[ai]) then return nil, 'unexpected AI type ' .. ai end
     if u32(rec, 104) ~= f.id then return nil, 'perception owner' end
@@ -196,7 +218,7 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
   -- (4.5: the lists' own addresses are looked up once a frame and shared by every sentry's check; after the game's
   -- update, sentry_after, afresh)
   local RC = { frame = -1 }
-  local function records_current(s)
+  records_current = function(s)
     local g = A.g
     if RC.frame ~= FRAME then
       RC.frame = -1
@@ -411,9 +433,12 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
             if not (s and s.row == row_key(e) and s.ptr == p and not s.moved) then
               local ok, ns, why = pcall(build, { def = def, ptr = p, row = row_key(e), id = id, unit = u32(e, 12), slot = i }, targeting, behaviours, perception)
               if ok and ns then
-                -- (the enemies hidden from it stay hidden if its perception record is the same one; otherwise they are
-                -- put back and hidden again in its new record)
-                if s and s.pbase == ns.pbase then ns.H = s.H elseif s then pcall(hider_restore, s.H) end
+                -- (the enemies hidden from it stay hidden: in its perception record, or (4.6.6 review) where the game
+                -- copied that record to - before, they were put back through the old record, which may already hold
+                -- another agent, and the copies were left blanked with nothing to put them back)
+                local r = remembered[id]
+                if s then ns.H = shift_hidden(s.H, ns.pbase - s.pbase)
+                elseif r and r.H and r.name == def.name and r.unit == ns.unit then ns.H = shift_hidden(r.H, ns.pbase - r.pbase) end
                 sentries[id] = ns
                 local d = session.sentries[def.name] or { placed = 0, out = 0, targeted = 0, stops = 0, mate_stops = 0, armour = 0 }
                 session.sentries[def.name] = d
@@ -460,7 +485,7 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
               if not N[id] and (N.count or 0) < 10 then
                 N[id], N.count = true, (N.count or 0) + 1
                 local bi = map_lookup(behaviours + 64, id, 32768)
-                local ai = bi and bi < 16384 and read(rptr(behaviours + 96, 'behaviour records') + bi * A.stride, 4)
+                local ai = bi and bi < 16384 and read(rptr(behaviours + 96, 'behavior records') + bi * A.stride, 4)
                 event(string.format('sentry (test): a %s not run by this game (id %d, unit %d, flag byte %d, AI %s)', def.name, id, u32(e, 12), e:byte(21),
                   ai and tostring(u32(ai, 0)) or 'none'))
               end
@@ -479,10 +504,20 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
           pcall(function()
             local bi = map_lookup(behaviours + 64, u32(e, 8), 32768)
             if not bi or bi >= 16384 then return end
-            local ai = u32(rd(rptr(behaviours + 96, 'behaviour records') + bi * A.stride, 4, 'behaviour record'), 0)
+            local ai = u32(rd(rptr(behaviours + 96, 'behavior records') + bi * A.stride, 4, 'behavior record'), 0)
             type_ai[ty] = ai
             if SENTRY_AI[ai] then event(string.format('unknown sentry-like agent on your side: type %s, AI %d (not steered)', EXT.hexr(ty), ai)) end
           end)
+          -- (4.6.6 numbered Tester builds: every new kind of agent of yours, AI and perception record or not - to see
+          -- whether a thrown Seeker grenade is one, and with what)
+          if TESTER and TEST_BUILD then
+            pcall(function()
+              local id = u32(e, 8)
+              local pi = map_lookup(perception + 48, id, 32768)
+              event(string.format('agent (test): a new kind on your side: type %s, unit %d, AI %s, perception record %s', EXT.hexr(ty), u32(e, 12),
+                type_ai[ty] and tostring(type_ai[ty]) or 'none', (pi and pi < 16384) and 'yes' or 'no'))
+            end)
+          end
         end
       end
     end
@@ -703,7 +738,7 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
   end
 
   -- (5.0 test builds) where a helldiver is relative to a vehicle's gun: position in the vehicle's own axes (from the
-  -- vehicle's centre; which axis is forward isn't known yet), the muzzle's height above their feet and, for a shot
+  -- vehicle's center; which axis is forward isn't known yet), the muzzle's height above their feet and, for a shot
   -- line, how high above their feet it passes them and how far from the muzzle. To tell the driver's seat, the other
   -- seats (people lean out of the windows to shoot) and people standing next to it apart before the safety treats
   -- riders differently. Up to 25 safety stops, and a sample every 3 s while someone is within 6 m (up to 25)
@@ -719,23 +754,23 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
       local H = math.sqrt((p[1] - M[1]) ^ 2 + (p[2] - M[2]) ^ 2)
       if H > 0.1 then line = string.format(', line passes %.2f m above your feet %.1f m from the muzzle', M[3] + (p[3] + AIM_UP[2] - M[3]) * math.min(1, h / H) - a[3], h) end
     end
-    note(string.format('rider (test) at %.0fs: %s: %s; you in its axes %s (level %.1f m from its centre), muzzle %.2f m above your feet%s',
+    note(string.format('rider (test) at %.0fs: %s: %s; you in its axes %s (level %.1f m from its center), muzzle %.2f m above your feet%s',
       os.clock() - T0, s.def.name, what, loc, math.sqrt(rel[1] ^ 2 + rel[2] ^ 2), M[3] - a[3], line))
   end
 
   -- (5.0) someone sitting in the Supply FRV: its gun can't hit them (a tester's check in game) - only a passenger
   -- aiming out of a window, whose head, arms and gun are then outside the cab. Seats measured in game (Test 10
-  -- riders log, in the FRV's own axes: side, fore-aft, up from its centre): the front pair at (+-0.36, -1.51, -1.08),
+  -- riders log, in the FRV's own axes: side, fore-aft, up from its center): the front pair at (+-0.36, -1.51, -1.08),
   -- the back pair at (+-0.36, -0.70, -1.08); getting out showed (-1.76, ..., -1.45). Anyone inside that box is a
   -- rider. A rider counts as aiming out when any part of their body (the parts of their unit's pose) is more than
-  -- 'window' metres to the side of the FRV's centre on their side (the seats are 0.36 m out; the value is a first
+  -- 'window' meters to the side of the FRV's center on their side (the seats are 0.36 m out; the value is a first
   -- guess, the test builds log each rider's reach to tune it). Seated: left out of this gun's safety altogether.
   -- Aiming out: their usual body, plus one around the parts outside the cab. Anyone outside the box: as always
   -- (4.5, a tester: the safety still stopped the gun now and then while he sat in it. Seated reaches of up to 0.93 m
   -- were logged, aiming out 1.44 m and more: 'window' 0.95 -> 1.15. And the driver - the front seat on the +x side,
   -- where a tester always sat driving alone - can't aim out of the window at all: always seated)
   local RIDE = { side = 0.9, fore = { -2.3, 0.1 }, up = { -1.4, -0.7 }, window = 1.15, parts = 96, driver_fore = -1.1 }
-  -- how far (metres, sideways from the FRV's centre, on the seat's side) the rider's body reaches, and the parts that
+  -- how far (meters, sideways from the FRV's center, on the seat's side) the rider's body reaches, and the parts that
   -- stick out of the cab (a vertical segment around them), or nil if their pose can't be read
   local function reach_out(a, V, ax, side_sign)
     local pose = a.pose
@@ -1021,7 +1056,15 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
   -- ask it to drop its target (with the hold and back-off rules)
   local function kick(s, st, t, hide, block, reason)
     local P = s.P
-    if st.target ~= 0 and P.kicked == st.target then P.ignored = P.ignored + 1 else P.kicked, P.ignored = st.target, 0 end
+    -- ((4.6.6 review) an ask is counted as ignored only when the same ask for the same target comes again, and not in an
+    -- AI step in which the game doesn't choose again (step 10, a salvo, the Tesla Tower's step 4): before, asks there,
+    -- and an ignored ask for another reason, turned the first safety stops into a 1 s back-off with no ask)
+    local deaf = st.node == BUSY_NODE or (s.def.salvo_node ~= nil and st.node == s.def.salvo_node)
+    if st.target ~= 0 and P.kicked == st.target and P.kick_reason == reason then
+      if not deaf then P.ignored = P.ignored + 1 end
+    else
+      P.kicked, P.ignored, P.kick_reason = st.target, 0, reason
+    end
     if TESTER and st.target ~= 0 and P.ignored > 0 and (P.ignore_notes or 0) < 12 then
       -- (test builds: why a sentry kept an enemy it was asked to drop)
       P.ignore_notes = (P.ignore_notes or 0) + 1
@@ -1031,7 +1074,9 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
         c and c.kind and EXT.hexr(c.kind) or '?', st.node, c and (c.mask == BLANK and 'hidden' or 'shown') or 'not listed',
         (st.deadline - now) / 1e6, reason) .. near_note(st, c))
     end
-    if P.ignored >= 2 then
+    -- ((4.6.6 review) never for a safety stop: it is asked again every HOLD for as long as the target is unsafe - a
+    -- back-off left the target only hidden for a second, which a sentry that keeps its target fires through)
+    if P.ignored >= 2 and reason ~= 'sentry_safety' then
       P.kicked, P.ignored = nil, 0
       if reason == 'sentry_cannot_hurt' then P.stuck[st.target] = true; return { block = hide, kick = false, reason = reason } end
       if reason == 'sentry_out_of_sight' then
@@ -1046,7 +1091,7 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
       bump(session.actions, 'sentry_backing_off')
       return { block = union(block, hide), kick = false, reason = reason }
     end
-    P.hold = { target = st.target, block = block, until_t = t + HOLD, reason = reason }
+    P.hold = { target = st.target, block = block, until_t = t + HOLD, reason = reason, deaf = deaf }
     P.last_kick_t = t
     if reason == 'sentry_safety' then P.safety_t, P.safety_enemy = t, st.target end
     return { block = union(block, hide), kick = true, reason = reason }
@@ -1163,10 +1208,40 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
     return { block = hide, kick = false, reason = reason, count = first }
   end
 
+  -- (4.6.6, a commenter: the Gatling Sentry fired at a Charger nonstop with Armor Intelligence on, 0 armor skips in
+  -- the log) every build logs a target a sentry keeps firing at (1.5 s of fire) that the mod doesn't recognize - its
+  -- type unreadable or not in the enemy list - or that Armor Intelligence should have skipped, with the entries
+  -- next to it: once per sentry kind and target, 12 a session
+  local target_notes = { n = 0, seen = {} }
+  local function target_check(s, st, P)
+    local target = st.target
+    if target == 0 or (P.on_fire or 0) < 1.5 or target_notes.n >= 12 then return end
+    local key = s.def.name .. ':' .. target
+    if target_notes.seen[key] then return end
+    local c = st.current
+    local kind = c and c.kind
+    local a = kind and ARMOR[kind]
+    local why
+    if not c then why = 'not in its list'
+    elseif not kind then why = 'its type could not be read (' .. (c.alive and 'alive' or 'not alive') .. ')'
+    elseif not a and not LABELS[kind] then
+      -- ((4.6.6 review) once per unknown type, not per enemy: a common bug with no name filled the 12 lines)
+      target_notes.seen[key] = true
+      key = 'type:' .. kind
+      if target_notes.seen[key] then return end
+      why = 'type ' .. EXT.hexr(kind) .. ' is not in the mod\'s enemy list'
+    elseif a and EXT.cannot_hurt(s.def, c) then
+      why = string.format('%s (type %s, armor %d), which Armor Intelligence skips - %s from it', a.name, EXT.hexr(kind), a.av, c.mask == BLANK and 'hidden' or 'not hidden')
+    end
+    if not why then return end
+    target_notes.seen[key], target_notes.n = true, target_notes.n + 1
+    event(string.format('target check: %s fired %.1f s at target %d: %s%s', s.tag or s.def.name, P.on_fire, target, why, near_note(st, c)))
+  end
+
   local function plan_sentry(s, st, bodies, t, people)
     local P, def, cands, target = s.P, s.def, st.candidates, st.target
     local armour_on = rawget(_G, 'SmarterGuardDogsArmor') == true   -- (Armor Intelligence: skipping, bursts, dropships)
-    local prio_on = OPT.priority()                                   -- (Target Prioritization: gunships, armor tiers, self-defence)
+    local prio_on = OPT.priority()                                   -- (Target Prioritization: gunships, armor tiers, self-defense)
     -- (test builds: which kinds of enemy each sentry goes for, by type id, for bug reports)
     if TESTER and target ~= P.seen_target then
       P.seen_target = target
@@ -1224,8 +1299,9 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
         on = not v or st.fwd[1] * v[1] + st.fwd[2] * v[2] + st.fwd[3] * v[3] >= COVER_S.aligned
       end
       if on and st.synced and (not def.fire_node or st.node == def.fire_node) then P.on_fire = P.on_fire + dt end
+      target_check(s, st, P)
     end
-    -- short bursts at Heavy Devastators (machine gun, Gatling: 'bursts'; with armour skipping on): fire this long at
+    -- short bursts at Heavy Devastators (machine gun, Gatling: 'bursts'; with armor skipping on): fire this long at
     -- one, then rest it
     local bursts = def.bursts and armour_on
     if bursts then
@@ -1244,7 +1320,12 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
     if def.spreads_fire then
       -- (a gunship doesn't burn down like the rest: it keeps the beam on it)
       local air = st.current and st.current.kind and AIR_FIRST[st.current.kind]
-      if target ~= 0 and not air and (P.on_fire >= SPREAD.fire or P.on_lock >= SPREAD.lock) then P.lit[target] = P.lit[target] or t; P.lit_now = target end
+      -- ((4.6.6, a commenter) nor does Heavy armor - a Charger, a Bile Titan: the Laser Sentry keeps its beam on it
+      -- instead of lighting it and leaving it to burn, which left it idle beside a lone Charger)
+      local h = def.spreads_fire == true and st.current and st.current.kind and ARMOR[st.current.kind]
+      if h and not h.sentries_skip and h.av >= 4 then air = true end
+      local lz = def.spreads_fire == true
+      if target ~= 0 and not air and (P.on_fire >= (lz and SPREAD.laser_fire or SPREAD.fire) or P.on_lock >= (lz and SPREAD.laser_lock or SPREAD.lock)) then P.lit[target] = P.lit[target] or t; P.lit_now = target end
       for id, t0 in pairs(P.lit) do if t - t0 >= SPREAD.burn then P.lit[id] = nil end end
     end
 
@@ -1315,27 +1396,34 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
     -- unlit is about, or nothing burning is close to anyone, the burning ones are left alone (one burning right at the
     -- sentry is kept on until it is dead)
     if def.spreads_fire then
-      local reach2, near2 = SPREAD.reach ^ 2, SPREAD.near_you ^ 2
+      local laser = def.spreads_fire == true
+      local reach2, near2 = SPREAD.reach ^ 2, (laser and SPREAD.laser_near or SPREAD.near_you) ^ 2
       local unlit, necessary, ud2 = false, false, nil
       local keep_on = def.spreads_fire == 'keep'
+      local B = st.base
+      -- (close to the sentry: its self-defense reach, or for the Laser Sentry 'laser_near' m)
+      local function close_by(c)
+        if near_sentry(s, st, c) then return true end
+        return laser and B and (c.pos[1] - B[1]) ^ 2 + (c.pos[2] - B[2]) ^ 2 + (c.pos[3] - B[3]) ^ 2 < near2
+      end
       for _, c in ipairs(cands) do
         local id = c.id
         if c.pos and c.visible and open(c) and not U[id] and not N[id] and not C[id] and not D[id] and not RG[id] and c.d2 and c.d2 <= reach2 then
           if P.lit[id] then
-            if near_body(people, c.pos, near2) or near_sentry(s, st, c) then necessary = true end
+            if near_body(people, c.pos, near2) or close_by(c) then necessary = true end
           else unlit = true; if not ud2 or c.d2 < ud2 then ud2 = c.d2 end end
         end
       end
-      st.spread_state = unlit and 'spreading' or (necessary and 'finishing a close one' or (keep_on and 'all burning, still firing' or 'letting them burn'))
-      if unlit or (not necessary and not keep_on) then
+      st.spread_state = unlit and 'spreading' or (necessary and 'finishing a close one' or ((keep_on or laser) and 'all burning, still firing' or 'letting them burn'))
+      if unlit or (not necessary and not keep_on and not laser) then
         for _, c in ipairs(cands) do
           -- ('keep': only for an unlit enemy at most 'closer_keep' m farther than the burning one - closer ones first)
-          if P.lit[c.id] and in_play(c, st) and ((unlit and not keep_on) or not near_body(people, c.pos, near2)) and not near_sentry(s, st, c)
+          if P.lit[c.id] and in_play(c, st) and ((unlit and not keep_on) or not near_body(people, c.pos, near2)) and not (c.pos and close_by(c))
             and not (keep_on and c.d2 and ud2 and math.sqrt(c.d2) + PRIORITY.closer_keep < math.sqrt(ud2)) then SP = put(SP, c.id) end
         end
       end
     end
-    -- priority (rocket/autocannon: armoured first; machine gun/Gatling/Laser: unarmoured first; Flame: the closest
+    -- priority (rocket/autocannon: armored first; machine gun/Gatling/Laser: unarmored first; Flame: the closest
     -- first). Enemies that are burning, resting between short bursts, out of reach or hidden for any other reason
     -- don't count as the better choice
     if def.prefer and prio_on then
@@ -1343,7 +1431,7 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
       -- (4.6.4 review: its own range - 'reach' in its def, wiki: MG/Gatling/pod/FRV 75 m, Laser 50 m; else 100 m, the
       -- Autocannon's and Rocket's - so a gun never drops a close enemy for one past its range)
       local reach2, near2 = (def.reach or PRIORITY.reach) ^ 2, PRIORITY.near_you ^ 2
-      -- self-defence first: while an enemy it can hurt (and isn't holding off for any reason) is right at the sentry,
+      -- self-defense first: while an enemy it can hurt (and isn't holding off for any reason) is right at the sentry,
       -- everything farther away waits
       local close, want
       for _, c in ipairs(cands) do
@@ -1396,7 +1484,7 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
       end
     end
     local hide = union(U, N, Q, C, B, SP, O, D, HV, DD, RG)
-    if TESTER then st.hide_sets = { unsafe = U, armour = N, priority = Q, cooling = C, burst_rest = B, burning = SP, out_of_sight = O, on_dropship = D, helldiver = HV, dead = DD, out_of_reach = RG } end
+    if TESTER then st.hide_sets = { unsafe = U, armor = N, priority = Q, cooling = C, burst_rest = B, burning = SP, out_of_sight = O, on_dropship = D, helldiver = HV, dead = DD, out_of_reach = RG } end
     -- (the helldivers' entries, hidden again right after the game's update: sentry_after)
     -- (4.5: by id, not by place - the game moves entries up its list when one before them goes, e.g. an enemy it
     -- just killed, and a helldiver's entry moved into a new place would have been left shown there)
@@ -1508,7 +1596,9 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
     end
     -- (4.6.4 review: a hold for any other reason never delays a safety stop - in the sim a back-off after two ignored
     -- priority asks let a machine gun sentry fire through you for 37 frames)
-    if P.hold and target == P.hold.target and t < P.hold.until_t and not (U_now[target] and P.hold.reason ~= 'sentry_safety') then
+    -- ((4.6.6 review) and a safety ask made in a step that ignores asks is made again the moment that step ends)
+    local deaf_over = P.hold and P.hold.deaf and P.hold.reason == 'sentry_safety' and st.node ~= BUSY_NODE and st.node ~= def.salvo_node
+    if P.hold and target == P.hold.target and t < P.hold.until_t and not (U_now[target] and P.hold.reason ~= 'sentry_safety') and not deaf_over then
       return { block = union(P.hold.block, hide), kick = false, reason = P.hold.reason }
     end
     P.hold = nil
@@ -1531,9 +1621,9 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
       if SP[target] and P.lit_now == target then P.lit_now = nil; return drop_target(s, st, t, hide, 'sentry_spread') end
       -- overheating: drop its target so it stops firing and cools
       if C[target] then return drop_target(s, st, t, hide, 'sentry_cooling') end
-      -- armour it can't hurt
+      -- armor it can't hurt
       if N[target] and not P.stuck[target] then return drop_target(s, st, t, hide, 'sentry_cannot_hurt') end
-      -- a better-suited enemy (by armour) is in sight: switch to it (at most every 'calm' seconds)
+      -- a better-suited enemy (by armor) is in sight: switch to it (at most every 'calm' seconds)
       if Q[target] and t - (P.prio_t or -99) >= PRIORITY.calm then
         P.prio_t = t
         return drop_target(s, st, t, hide, 'sentry_priority')
@@ -1598,7 +1688,7 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
       what = why .. where .. ((g and g < 50 and not s.def.blast and g > -5 and not why:find('swing')) and string.format(', %.2f m inside the safety margin', math.max(0, -g)) or '')
     else
       local a = c and c.kind and ARMOR[c.kind]
-      what = (a and (a.name .. ', armour ' .. a.av) or '?') .. where
+      what = (a and (a.name .. ', armor ' .. a.av) or '?') .. where
     end
     event(string.format('%s%s: %s (target %d, %s; AI step %d)', READ_ONLY and 'would ' or '', req.reason, (s.tag or s.def.name), st.target, what, st.node))
   end
@@ -1717,7 +1807,7 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
     -- ((4.6.4 review) each is forgotten into 'remembered' - its tag, heat and policy - so turning the option back on
     -- mid-mission doesn't count it as placed again or reset a Laser Sentry's heat; wiped at mission end)
     if not OPT.sentries() then
-      for id, s in pairs(sentries) do forget(id, s, 'Sentries option off') end
+      for id, s in pairs(sentries) do forget(id, s, 'Sentries option off', true) end
       -- ((4.6.4 release review) and out of a mission it goes, as with the option on (that wipe is further down)
       if (next(remembered) or next(not_steered)) and not st_dog and not EXT.in_mission() then remembered, not_steered = {}, {} end
       return false
@@ -1790,7 +1880,9 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
       if s.moved_after then s.moved_after, moved = nil, true
       -- (4.5, Test 30: and every sentry while it is busy - a tester found the FRV gun's safety a moment late, and its
       -- records move often: until a move is found, its asks go to the old copy)
-      elseif t >= (s.check_next or 0) or s.busy or (s.def.spares_helldivers and s.after_ok ~= FRAME - 1) then
+      -- ((4.6.6 review) a Tesla Tower is always busy: its check is skipped when sentry_after confirmed its records right
+      -- after the game's last update, as meant - before, 'busy' ran it every frame anyway)
+      elseif t >= (s.check_next or 0) or (s.busy and not s.def.spares_helldivers) or (s.def.spares_helldivers and s.after_ok ~= FRAME - 1) then
         s.check_next = t + CHECK_EVERY
         local okc, cur = pcall(records_current, s)
         if okc and not cur then s.moved, s.spare_ids, s.st, moved = true, nil, nil, true end
@@ -1880,14 +1972,14 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
   -- (the rings are ~10% brighter than the lasers, a tester's call: alpha, red, green, blue)
   -- (4.0.6: the Tesla Tower's ring is yellow, a tester's call; before, green)
   local RING_YELLOW, RING_RED = { 150, 124, 112, 22 }, { 170, 141, 21, 21 }
-  -- (a sentry doesn't move once it is set up, so each ring is built once per sentry, radius and colour and reused:
+  -- (a sentry doesn't move once it is set up, so each ring is built once per sentry, radius and color and reused:
   -- rebuilt only if its base moved more than 0.2 m)
   -- (the Tesla Tower's ring is drawn as two rings 8 cm apart, a tester's call: thicker, so it reads at a distance;
-  -- 'bands' lists the offsets from the radius, in metres. Three bands 6 cm apart cost 50% more drawing for about the
+  -- 'bands' lists the offsets from the radius, in meters. Three bands 6 cm apart cost 50% more drawing for about the
   -- same look)
   local RING_BANDS = { 0 }
   local TESLA_BANDS = { -0.04, 0.04 }
-  -- height above the sentry's base (metres). (4.0.6: the Tesla Tower's ring sits about a foot higher, a tester's call:
+  -- height above the sentry's base (meters). (4.0.6: the Tesla Tower's ring sits about a foot higher, a tester's call:
   -- on uneven ground the lower ring disappeared into the terrain; 4.5: four feet, 1.22 m, a tester's call)
   local RING_RISE, TESLA_RISE = 0.15, 1.22
   local function add_ring(beams, s, c, r, argb, bands, rise)
