@@ -124,6 +124,8 @@ do
   OPT.dogs = function() return flag('SmarterGuardDogsDogs', 'guard dogs', ': left to the game') end
   OPT.sentries = function() return flag('SmarterGuardDogsSentries', 'sentries', ': left to the game') end
   OPT.tesla = function() return flag('SmarterGuardDogsTesla', 'tesla tower', ': left to the game') end
+  -- (4.6.5) Sentry Safety: your sentries don't fire through or blast any sentry out - yours or another player's
+  OPT.sentry_safety = function() return flag('SmarterGuardDogsSentrySafety', 'sentry safety', ': your sentries may fire through other sentries') end
   OPT.priority = function() return flag('SmarterGuardDogsPriority', 'target prioritization', ': the game decides the order') end
 end
 
@@ -207,7 +209,13 @@ function find_player()
   if not e then return nil, 'no helldiver yet' end
   need(e < 262144, 'owner index')
   local me = rd(owners + A.owner_rows + e * 24, 24, 'owner entity')
-  if me:sub(1, 8) ~= AVATAR_TYPE or not is_local(me) then return nil, 'helldiver is not ours' end
+  if not is_local(me) then return nil, 'helldiver is not ours' end
+  -- (4.6.5, a commenter: players in exosuits weren't protected) while you pilot something (an exosuit, say) the game's
+  -- avatar is that unit, not your helldiver: it used to end here - no body for you, the sentries' safety off for you.
+  -- Now it is returned as a vehicle (its type), and the sentries keep a larger body round it (bodies_for)
+  if me:sub(1, 8) ~= AVATAR_TYPE then
+    return { me = me, owner_id = u32(me, 8), player_unit = u32(me, 12), owners = owners, team_key = me:sub(1, 20), vehicle = me:sub(1, 8) }
+  end
   return { me = me, owner_id = u32(me, 8), player_unit = u32(me, 12), owners = owners, team_key = me:sub(1, 20) }
 end
 
@@ -218,6 +226,7 @@ local function locate()
   if not OPT.dogs() then return nil, 'guard dogs option off (left alone)' end
   local pl, why = find_player()
   if not pl then return nil, why end
+  if pl.vehicle then return nil, 'piloting a vehicle' end   -- (4.6.5: as before, the dog is left alone then)
   local me, owner_id, player_unit, owners = pl.me, pl.owner_id, pl.player_unit, pl.owners
 
   local equipment = global('equipment')
@@ -502,6 +511,21 @@ function read_candidates(pbase, origin, registry, want_header)
   return candidates, want_header and ffi.string(PBUF, 264) or nil
 end
 
+
+-- (4.6.5, the author: no more firing at the spot for a second after a target is lost, for every dog and sentry) the AI keeps
+-- shooting where its target was until 1 s after the loss time in its record (+408, stamped by the game; found on the
+-- Gatling / pod / FRV guns, 4.6.2-4.6.3; the dump shows other sentry AIs with the same check). Moving that time back
+-- a second lets the game's own check end the firing at its next update. Only when +408 reads a time from the last
+-- second (the loss just happened); returns its age in seconds, written or not, or nil (not a recent time)
+function loss_cut(rec_addr, now)
+  if (A.stride or 0) < 416 then return nil end
+  local lt = read(rec_addr + 408, 8)
+  if not lt then return nil end
+  local age = now - u64(lt, 0)
+  if age < 0 or age >= 1000000 then return nil, age end
+  if not write(rec_addr + 408, u64bytes(now - 1000001)) then stats.write_failures = stats.write_failures + 1; return nil end
+  return age / 1e6
+end
 
 function in_mission()
   local mission_ptr = ptr_of(read(A.g.mission, 8), 0)

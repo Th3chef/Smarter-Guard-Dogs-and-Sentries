@@ -40,6 +40,10 @@ local menu_step = (function()
       description = 'Who your dog and your sentries never fire through: they hold fire while that helldiver is in their line of fire, don\'t swing their fire across them, mortars and the rocket sentry leave enemies next to them alone, and the Tesla Tower doesn\'t zap them or arc into them. Turn off at your own risk: they will fire through anyone. Everything else keeps working.',
       apply = function(v) set('Safety', v == 2 or v == 3); set('Teammates', v == 2 or v == 4) end,
       start = function() local y, m = flag('Safety'), flag('Teammates'); return (y and m) and 2 or (y and 3) or (m and 4) or 1 end },
+    -- (4.6.5) Sentry Safety: its own on/off row, after Safety
+    { key = 'sentry_safety', label = 'Sentry Safety', type = 'toggle',
+      description = 'Your sentries don\'t shoot through other sentries, yours or other players\': they hold fire while one is in their line of fire, don\'t swing their fire across one, and the mortars and the rocket and autocannon sentries leave alone enemies right next to one. Turn off to let them fire through sentries. Everything else keeps working.',
+      apply = function(v) set('SentrySafety', v) end, start = function() return flag('SentrySafety') end },
     { key = 'laser', label = 'Targeting Laser', type = 'choice', choices = { 'Off', 'Line', 'Glow' },
       description = 'Laser out of the barrel of your guard dog and your sentries (not the mortars) toward their targets, shown only on your screen: green while they fire, flashing red when the safety stops a shot, flashing yellow when the dog\'s target goes out of sight. The Tesla Tower shows its reach as a yellow ring. Line: thin, hidden by walls. Glow: a soft beam that shows through walls.',
       apply = function(v) set('Laser', v ~= 1); set('Glow', v == 3) end,
