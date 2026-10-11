@@ -33,8 +33,8 @@ def bright_source(v):
     return ('-- HD2-Addon: %s\n'
             '-- Smarter Guard Dogs & Sentries - Laser Brightness (optional part): the targeting laser at %d%%.\n'
             "rawset(_G, 'SmarterGuardDogsLaserBrightness', %s)\n" % (BRIGHT_MODULE, round(v * 100), repr(v))).encode('utf-8')
-VERSION = '4.6.5'
-NAME_SUFFIX = ''   # '' for releases, e.g. ' Test 3' for test builds
+VERSION = '4.6.6'
+NAME_SUFFIX = ' Test 3'   # '' for releases, e.g. ' Test 3' for test builds
 ARCHIVE = '9ba626afa44a3aa3.patch_0'        # the game archive the shared loader reads addons from
 LUA_TYPE, MAGIC = 0xa14e8dfa2cd117e2, 0xF0000011
 PARTS = ['engine_head', 'engine_body', 'layout_data', 'engine_layout', 'engine_state', 'engine_laser', 'engine_research', 'engine_armor', 'engine_logic', 'engine_sentry', 'engine_main']
@@ -60,8 +60,19 @@ def archive(entries):
     total = cursor
     return header(total) + rows + body
 
+# (4.6.6 Test 2+) research probe (engine_probe.lua): numbered Tester builds only, never a release or a release's Tester
+PROBE_PART, PROBE_BEFORE = 'engine_probe', 'engine_main'
+
 def source(read_only, tester=False):
-    src = ''.join(open(os.path.join(HERE, p + '.lua'), encoding='utf-8').read() for p in PARTS)
+    parts = list(PARTS)
+    if tester and NAME_SUFFIX:
+        parts.insert(parts.index(PROBE_BEFORE), PROBE_PART)
+    src = ''.join(open(os.path.join(HERE, p + '.lua'), encoding='utf-8').read() for p in parts)
+    # ((4.6.6 review) the test switches must be off in the source, so a plain build can never ship one switched on:
+    # before, each was only checked when the build turned it on)
+    for flag in ("local TESTER = false", "local TEST_BUILD = false", "local RESEARCH = false", "local READ_ONLY = false"):
+        assert src.count(flag) == 1, 'expected exactly one "%s" in the source' % flag
+    assert (PROBE_PART in parts) == ('SGD.probe_step = function' in src), 'probe part in the wrong builds'
     # (4.6.4 review) the VERSION line must match build.py's VERSION in every build, and carries the test number in
     # numbered test builds (release or not), so the log always says which build wrote it
     v = "local VERSION = '%s'" % VERSION
@@ -149,8 +160,8 @@ def package(read_only, out_zip, tester=False):
              ]},
             # (4.6.5) its own on/off item, after Safety (on by default, like the other on/off items)
             {'Name': 'Sentry Safety', 'Description': 'Your sentries don\'t shoot through other sentries, yours or other players\': '
-             'they hold fire while one is in their line of fire, don\'t swing their fire across one, and the mortars and the rocket '
-             'and autocannon sentries leave alone enemies right next to one. Turn off to let them fire through sentries. Everything '
+             'they hold fire while one is in their line of fire, don\'t swing their fire across one, and the mortars and the rocket, '
+             'autocannon and flame sentries leave alone enemies right next to one. Turn off to let them fire through sentries. Everything '
              'else keeps working.',
              'Image': 'options/option_sentry_safety.png', 'Include': [SENTRY_SAFETY_DIR]},
             {'Name': 'Targeting Laser', 'Description': 'Laser out of the barrel of your guard dog and your sentries (not the mortars) toward their targets, shown '
