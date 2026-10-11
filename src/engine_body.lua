@@ -125,8 +125,8 @@ local function write_log()
   table.sort(snames)
   for _, name in ipairs(snames) do
     local d = session.sentries[name]
-    f:write(string.format('  %-18s placed %d%s, out %s, with a target %.0f%% of that; safety stops %d (for a teammate %d), armor skips %d, priority switches %d%s%s%s%s%s%s%s%s\n',
-      name, d.placed, (d.max_out or 0) > 1 and string.format(' (up to %d out at once)', d.max_out) or '', mmss(d.out), d.out > 0 and 100 * d.targeted / d.out or 0, d.stops, d.mate_stops, d.armour, d.priority or 0,
+    f:write(string.format('  %-18s placed %d%s, out %s, with a target %.0f%% of that; safety stops %d (for a teammate %d%s), armor skips %d, priority switches %d%s%s%s%s%s%s%s%s\n',
+      name, d.placed, (d.max_out or 0) > 1 and string.format(' (up to %d out at once)', d.max_out) or '', mmss(d.out), d.out > 0 and 100 * d.targeted / d.out or 0, d.stops, d.mate_stops, (d.sentry_stops or 0) > 0 and string.format(', for a sentry %d', d.sentry_stops) or '', d.armour, d.priority or 0,
       d.cooldowns and string.format(', cool-downs %d', d.cooldowns) or '',
       d.sentry_burst_done and string.format(', short bursts %d', d.sentry_burst_done) or '',
       d.sentry_spread and string.format(', set alight and moved on %d', d.sentry_spread) or '',
@@ -357,7 +357,7 @@ for _, d in ipairs(DOGS) do DOG_BY_PACK[d.pack] = d end
 --  hits_carried: may shoot enemies still aboard a dropship (rocket, autocannon: the splash hurts the dropship too);
 --    the other sentries leave them until they land
 --  bursts: short bursts at Heavy Devastators, like the Guard Dog (machine gun, Gatling)
---  loss_time (4.6.3): its AI record's +408 holds the time it lost its target (it fires on at the spot for 1 s after);
+--  loss_time (4.6.3): its AI record's +408 holds the time it lost its target (it fires on at the spot for 1 s after; since 4.6.5 that time is moved back for every dog and sentry kind but the salvo guns, so this flag only documents where it was first found);
 --    found on the Supply FRV gun's AI and the Gatling's, which the Resupply Pod gun also runs
 --  air_first: gunships and Stingrays before everything else (Gatling, autocannon, rocket, Laser)
 --  reach (4.6.4): its range per the wiki (metres): only enemies this close count as a better target (Target Prioritization);
@@ -370,7 +370,7 @@ for _, d in ipairs(DOGS) do DOG_BY_PACK[d.pack] = d end
 local SENTRIES = {
   { name = 'Machine Gun Sentry', type = type_hash('37cde43876ba26bb'), ai = 312, line = 0.45, spread = 0.01, sweep = true, barrel_axis = 2, pen = 3, bursts = true, reach = 75, prefer = 'light' },
   { name = 'Gatling Sentry', type = type_hash('ef85d6cf58e31d70'), ai = 213, line = 0.5, spread = 0.015, sweep = true, barrel_axis = 2, pen = 3, bursts = true, loss_time = true, reach = 75, prefer = 'light', air_first = true },
-  { name = 'Autocannon Sentry', type = type_hash('54d86057f5dacfb9'), ai = 5, line = 0.45, spread = 0.005, splash = 2.0, prefer = 'heavy', air_first = true, hits_carried = true, laser_at_enemy = true },   -- (type confirmed in game; unit hellpod/autocannon_turret/autocannon_turret)
+  { name = 'Autocannon Sentry', type = type_hash('54d86057f5dacfb9'), ai = 5, line = 0.45, spread = 0.005, splash = 2.0, prefer = 'heavy', air_first = true, hits_carried = true, laser_at_enemy = true, salvo = true },   -- (type confirmed in game; unit hellpod/autocannon_turret/autocannon_turret)
   { name = 'Rocket Sentry', type = type_hash('37079568dc86e9c6'), ai = 611, line = 0.6, spread = 0.01, splash = 4.5, min_range = 10, prefer = 'heavy', air_first = true, hits_carried = true, laser_at_enemy = true,
     salvo_node = 13 },   -- (mid-salvo it ignores being asked to choose again)
   -- (heat: the wiki says it heats 8 degrees a second while firing, burns out at 250 and cools 3.8-7.5 a second; in game it
@@ -388,18 +388,22 @@ local SENTRIES = {
   -- (the arc's jump, 'splash'; 5 m before 4.5, a tester's call), and instead of a laser it shows its range as a ring
   -- ('ring', shown the whole time it is out). AI 661 (Test 28 log); its gun sits ~2.6 m up
   { name = 'Tesla Tower', type = type_hash('74599e56f72f9d7e'), ai = 661, line = 0.6, spread = 0.02, splash = 10.0, spares_helldivers = true,
-    ring = 20, muzzle_up = 2.6, salvo_node = 4 },   -- (step 4: its 1.5 s of firing, in which it doesn't choose again)
+    ring = 20, muzzle_up = 2.6, salvo_node = 4, height = 3.0, spares_sentries = true },   -- (step 4: its 1.5 s of firing, in which it doesn't choose again;
+    -- 4.6.5 Sentry Safety: 'spares_sentries', hellpod items are arc-protected (wiki); 'height', how tall it stands)
   -- (4.6.4 wiki check: 'blast' = how far its shells must land from a helldiver - the Mortar's shockwave reaches 13 m
   -- (blast 9 m), the EMS Mortar's stun 10 m and its shockwave 12 m; were 12 and 8)
-  { name = 'Mortar Sentry', type = type_hash('51a0812e3bce2d74'), ai = 322, blast = 13, no_laser = true },   -- (AI 322 in game, Test 27 log)
-  { name = 'EMS Mortar Sentry', type = type_hash('b2053a1838092f8b'), ai = 324, blast = 12, no_laser = true },   -- (AI 324 in game, Test 28 log)
+  -- (4.6.5 Sentry Safety, 'sentry_blast': how far its shells must land from a sentry - the Mortar's explosion does 400 out to
+  -- 3 m, fading to nothing at 9 m (a sentry has 400-600 health); the EMS Mortar's does 150 out to 1 m, nothing past 2 m, its
+  -- stun field does no damage)
+  { name = 'Mortar Sentry', type = type_hash('51a0812e3bce2d74'), ai = 322, blast = 13, sentry_blast = 7, no_laser = true },   -- (AI 322 in game, Test 27 log)
+  { name = 'EMS Mortar Sentry', type = type_hash('b2053a1838092f8b'), ai = 324, blast = 12, sentry_blast = 2.5, no_laser = true },   -- (AI 324 in game, Test 28 log)
   -- (5.0) the guns that come with a resupply pod (Armed Resupply Pods booster) and on the M-103 Supply FRV: both an
   -- automatic AR-23P Liberator Penetrator (medium armour penetration, 640 rpm, ~120-140 rounds, 30 m), run on the Gatling's
   -- AI template. Types from a 4.0.6 Test 8 log (AI 213 and 212); their units are unnamed, found in the resupply pod's
   -- archive (263277e5added56c, with the ammo rack) and the Supply FRV's (149f685717737cae). Treated like the machine gun:
   -- skips armour it can't hurt (saving its rounds), short bursts at Heavy Devastators, unarmoured enemies first. 'ais':
   -- either of the Gatling template's two ids is accepted. The FRV's gun moves with the vehicle and fires past its driver
-  { name = 'Resupply Pod Gun', type = type_hash('73681ffd58fa1a90'), ai = 213, ais = { [212] = true, [213] = true }, line = 0.45, spread = 0.01, sweep = true, barrel_axis = 2, pen = 3, bursts = true, loss_time = true, reach = 75, prefer = 'light',
+  { name = 'Resupply Pod Gun', mount = true, type = type_hash('73681ffd58fa1a90'), ai = 213, ais = { [212] = true, [213] = true }, line = 0.45, spread = 0.01, sweep = true, barrel_axis = 2, pen = 3, bursts = true, loss_time = true, reach = 75, prefer = 'light',
     turn_hold = 30 },   -- (4.6.2: as the Supply FRV gun, whose AI it runs - turns to an enemy far round without firing)
   -- (4.5: barrel_axis 2 like the Gatling's, whose AI they run on: a Test 28 log found axis 2+ at 0.987 on the FRV gun;
   -- learning it on a moving vehicle failed as often as not)

@@ -847,6 +847,19 @@ function steer(st, req)
   if read(st.rec_addr, 4) ~= st.rec_head then return end
   apply(st, req.block)
   if next(req.block) then stats.guarded_polls = stats.guarded_polls + 1 end
+  -- (4.6.5, the author: no firing at the spot for a second after a target is lost) still in its firing step (7) with no
+  -- target: its loss time is moved back, as for the sentries (loss_cut)
+  if st.target == 0 and st.node == 7 then
+    local age, raw = loss_cut(st.rec_addr, st.now)
+    if age then
+      stats.loss_cuts = (stats.loss_cuts or 0) + 1
+      bump(session.actions, 'dog_loss_cut')   -- ((4.6.5 review) in the log's action counts, like the sentries' cuts)
+      if TESTER and stats.loss_cuts <= 10 then event(string.format('loss cut (test): %s lost its target %.2f s ago, still firing: loss time moved back 1 s', st.dog.name, age)) end
+    elseif TESTER and raw and (stats.loss_notes or 0) < 3 then
+      stats.loss_notes = (stats.loss_notes or 0) + 1
+      event(string.format('loss cut (test): %s in its firing step with no target, its +408 reads %.2f s ago - left alone', st.dog.name, raw / 1e6))
+    end
+  end
   if not req.kick then return end
   last_reason = req.reason
   -- make the dog choose again right away (only when its timer looks sane)
