@@ -2,7 +2,6 @@
 -- Main loop
 -- ======================================================================================================
 local next_poll, next_log, last_log, broken = 0, 0, 0, false
-local read_fail_since           -- (4.6.6 review) when the dog's reads started failing (nil: they work)
 local last_poll_t
 local sentry_broken, sentry_last_error = false, nil
 local error_repeats = 0   -- (4.6.4 review: the same read error again, counted instead of logged again)
@@ -43,7 +42,7 @@ local menu_step = (function()
       start = function() local y, m = flag('Safety'), flag('Teammates'); return (y and m) and 2 or (y and 3) or (m and 4) or 1 end },
     -- (4.6.5) Sentry Safety: its own on/off row, after Safety
     { key = 'sentry_safety', label = 'Sentry Safety', type = 'toggle',
-      description = 'Your sentries don\'t shoot through other sentries, yours or other players\': they hold fire while one is in their line of fire, don\'t swing their fire across one, and the mortars and the rocket, autocannon and flame sentries leave alone enemies right next to one. Turn off to let them fire through sentries. Everything else keeps working.',
+      description = 'Your sentries don\'t shoot through other sentries, yours or other players\': they hold fire while one is in their line of fire, don\'t swing their fire across one, and the mortars and the rocket and autocannon sentries leave alone enemies right next to one. Turn off to let them fire through sentries. Everything else keeps working.',
       apply = function(v) set('SentrySafety', v) end, start = function() return flag('SentrySafety') end },
     { key = 'laser', label = 'Targeting Laser', type = 'choice', choices = { 'Off', 'Line', 'Glow' },
       description = 'Laser out of the barrel of your guard dog and your sentries (not the mortars) toward their targets, shown only on your screen: green while they fire, flashing red when the safety stops a shot, flashing yellow when the dog\'s target goes out of sight. The Tesla Tower shows its reach as a yellow ring. Line: thin, hidden by walls. Glow: a soft beam that shows through walls.',
@@ -107,12 +106,10 @@ local function tick()
     note('Laser Sentry Cooldown (CowboyBingus) is installed: works alongside it (an overheated Laser Sentry cools down and comes back; this mod still cools it before it overheats)')
   end
   menu_step()
-  -- (numbered Tester builds only: the research probe, engine_probe.lua - not in releases)
-  if SGD.probe_step then SGD.probe_step(t) end
   -- the log is rewritten every 10 s, and within a second of anything new being noted
   -- ((4.6.4 review) a change is written within 3 s, not every second: each rewrite is a whole file on the game thread;
   -- errors and shutdown still write at once)
-  if t >= next_log or (session.dirty and t - last_log >= 3) then next_log, last_log = t + 10, t; pcall(write_log) end   -- ((4.6.6 review) in a pcall: a log error stopped the whole mod)
+  if t >= next_log or (session.dirty and t - last_log >= 3) then next_log, last_log = t + 10, t; write_log() end
   -- (test builds: F8 also works while no dog is out, e.g. right after you died; checked every frame so a quick
   -- press isn't missed between the slower polls)
   if TESTER and SGD.status ~= 'active' then pcall(check_marker, nil) end
@@ -166,14 +163,8 @@ local function tick()
   end
   if not st then
     SGD.status, SGD.dog = why, nil
-    -- ((4.6.6 review) a failed read keeps the dog's hidden enemies hidden for up to half a second: putting them all
-    -- back at once let the game pick the enemy behind you while the dog was still out. Each one is put back only if its
-    -- entry still holds that enemy, so keeping them is safe; out of a mission, an error or the dog gone puts them back)
-    local transient = type(why) == 'string' and why:find('^read_failed') ~= nil
-    if transient then read_fail_since = read_fail_since or t else read_fail_since = nil end
-    if next(hidden) and not (transient and t - read_fail_since < 0.5) then restore() end
+    if next(hidden) then restore() end
   else
-    read_fail_since = nil
     SGD.status, SGD.dog = 'active', st.dog.name
     if #st.mates > session.team.max then session.team.max = #st.mates end
     if st.mates_found ~= session.team.last then
@@ -224,13 +215,13 @@ local ok, err = pcall(function() A = resolve_layout() end)
 if not ok then
   SGD.status = 'off: ' .. tostring(err)
   note('could not find the game addresses, the mod stays off: ' .. tostring(err))
-  pcall(write_log)
+  write_log()
   return
 end
 
 local game_update, game_shutdown = rawget(_G, 'update'), rawget(_G, 'shutdown')
 if type(game_update) ~= 'function' then
-  SGD.status = 'off: game update function not found'; pcall(write_log); return
+  SGD.status = 'off: game update function not found'; write_log(); return
 end
 do
   -- (after the game's update: the Tesla Tower's hidden helldivers are hidden again, see sentry_after. 4.6.4 Test 9
@@ -285,4 +276,4 @@ rawset(_G, 'shutdown', function(...)
   if type(game_shutdown) == 'function' then return game_shutdown(...) end
 end)
 SGD.status = 'waiting'
-pcall(write_log)
+write_log()

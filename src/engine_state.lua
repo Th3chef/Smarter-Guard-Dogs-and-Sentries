@@ -6,7 +6,7 @@ local A   -- absolute layout, set at start-up
 
 -- (4.6.3) the names other files use are declared here; the rest of this file sits in a do-block so its own
 -- helpers stop counting toward Lua's 200 locals of the main chunk once the file ends
-local is_local, unit_position, team, team_wanted, OPT, FRAME, teammates, team_detail, GROUPS, SINGLES, find_player, read_candidates, in_mission, read_state, PERC, loss_cut   -- ((4.6.6 review) loss_cut: was a global)
+local is_local, unit_position, team, team_wanted, OPT, FRAME, teammates, team_detail, GROUPS, SINGLES, find_player, read_candidates, in_mission, read_state, PERC
 do
 function is_local(entity) return bit.band(entity:byte(21), 3) == 1 end
 
@@ -46,7 +46,7 @@ local function unit_position_raw(id, want_axes)
     if x ~= x or y ~= y or z ~= z or math.abs(x) > 1e6 or math.abs(y) > 1e6 or math.abs(z) > 1e6 then return nil end
     local p = { x, y, z, pose = pose }
     if want_axes then
-      -- rotation rows, normalized; dropped if they do not look like a rotation
+      -- rotation rows, normalised; dropped if they do not look like a rotation
       local axes = {}
       for r = 0, 2 do
         local a = { f32(m, r * 16), f32(m, r * 16 + 4), f32(m, r * 16 + 8) }
@@ -283,10 +283,10 @@ local function locate()
 
   local bi = map_lookup(behaviours + 64, drone_id, 32768)
   if not bi then return nil, 'dog has no AI record' end
-  need(bi < u32(rd(behaviours + 32, 4, 'behavior count'), 0) and bi < 16384, 'behavior index')
-  need(rptr(rptr(behaviours + 88, 'behavior owners') + bi * 8, 'behavior owner') == drone_ptr, 'behavior owner')
-  local rec_addr = rptr(behaviours + 96, 'behavior records') + bi * A.stride
-  local rec = rd(rec_addr, 160, 'behavior record')
+  need(bi < u32(rd(behaviours + 32, 4, 'behaviour count'), 0) and bi < 16384, 'behaviour index')
+  need(rptr(rptr(behaviours + 88, 'behaviour owners') + bi * 8, 'behaviour owner') == drone_ptr, 'behaviour owner')
+  local rec_addr = rptr(behaviours + 96, 'behaviour records') + bi * A.stride
+  local rec = rd(rec_addr, 160, 'behaviour record')
   local want_behaviour = dog.laser and A.laser_behaviour or A.laser_behaviour + 1
   if u32(rec, 0) ~= want_behaviour then return nil, 'dog AI type ' .. u32(rec, 0) end
   need(u32(rec, 104) == drone_id, 'perception owner')
@@ -364,7 +364,7 @@ local function locate()
         for i = 0, cap - 1 do
           local key, v = u32(raw, 8 * i), u32(raw, 8 * i + 4)
           if key ~= empty and v < 16384 then
-            local op = ptr_of(read(owners + v * 8, 8), 0)   -- ((4.6.6 review) no "or ''": that read 8 bytes past an empty string
+            local op = ptr_of(read(owners + v * 8, 8) or '', 0)
             local oe = op and read(op, 24)
             local kind = oe and oe:sub(1, 8)
             local mine = dog.gun and kind == dog.gun
@@ -564,7 +564,7 @@ function read_state()
     rec = read(ctx.rec_addr, 160)
     if rec and u32(rec, 0) == ctx.want and u32(rec, 104) == ctx.drone_id then break end
     rec = nil
-    if attempt == 2 then need(false, 'behavior record') end
+    if attempt == 2 then need(false, 'behaviour record') end
   end
   local dog, rec_addr, pbase, registry = ctx.dog, ctx.rec_addr, ctx.pbase, ctx.registry
   local tstate = rd(ctx.tstate, 32, 'targeting state')
