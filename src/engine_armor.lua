@@ -1,9 +1,9 @@
 
 -- ======================================================================================================
--- Armour: enemies a dog cannot hurt. The game keys every enemy by a type hash (the first 8 bytes of its
--- entity row, byte-reversed). Each listed enemy has the armour where the dogs' shots land (the middle of
--- the body; for the Scout Strider that is the Medium-armoured crotch, not the Heavy front plate), from the
--- Helldivers wiki. Shots bounce off armour above a dog's penetration: Rover Light (2) - its beam must
+-- Armor: enemies a dog cannot hurt. The game keys every enemy by a type hash (the first 8 bytes of its
+-- entity row, byte-reversed). Each listed enemy has the armor where the dogs' shots land (the middle of
+-- the body; for the Scout Strider that is the Medium-armored crotch, not the Heavy front plate), from the
+-- Helldivers wiki. Shots bounce off armor above a dog's penetration: Rover Light (2) - its beam must
 -- connect to set anything on fire - Guard Dog Medium (3), K-9 Anti-Tank (7). Unlisted enemies are never
 -- skipped, so an unknown or new enemy type is simply treated the way the game treats it.
 -- ======================================================================================================
@@ -133,7 +133,7 @@ armor('f93ec7e4b88037b1', 4, 'Hulk Scorcher (Incineration Corps)')
 -- emplacements (Mortar confirmed in game; the machine-gun one turned up as its file name, so the heavy
 -- machine-gun one is taken from its file name too)
 armor('ff5cc825b9571052', 4, 'Mortar Emplacement')
-armor('a98f8b559c7993d8', 3, 'Automaton HMG Emplacement')   -- file name says heavy MG emplacement; seen in game as an armoured strider
+armor('a98f8b559c7993d8', 3, 'Automaton HMG Emplacement')   -- file name says heavy MG emplacement; seen in game as an armored strider
 armor('aeaef7a1851e6c9d', 4, 'Anti-Air Emplacement')   -- confirmed in game (F8 markers)
 armor('ef570293245a17c2', 4, 'War Strider')
 -- (4.0) a separate part of the War Strider that the Gatling Sentry kept firing at (a tester's F8 marker; its file
@@ -162,7 +162,7 @@ armor('16023e554fee830e', 5, 'Tank hull machine gun')
 armor('bc242702fb46b7e7', 5, 'Vox Engine')
 -- the big walkers' guns are separate targets. The miniguns are the same part on the Factory Strider (its front
 -- Fusion Gatling Guns) and the Vox Engine (its side Plasma Duster miniguns): wiki 300 health, Medium (AV3) on both.
--- But the dogs aim low, so their shots land on the armoured body around them (Heavy/Tank, AV4-5) and are wasted:
+-- But the dogs aim low, so their shots land on the armored body around them (Heavy/Tank, AV4-5) and are wasted:
 -- listed at AV5. The two minigun ids were identified by where they sat in a Vox Engine F8 marker (not by name);
 -- the upper pair is cyborg_siege_engine_turret (Vox cannons or launchers), and the Factory Strider's cannon turret
 -- is cyborg_big_walker_turret_cannon (Tank I, AV5); both names confirmed by hash
@@ -184,13 +184,13 @@ armor('965eae5a51acdd4a', 4, 'Harvester')
 armor('f22d027b37bef107', 4, 'Leviathan')
 armor('74e2285c01da4f71', 5, 'Warp Ship', { sentries_skip = true })   -- fac_illuminate/vehicles/illuminate_dropship
 
--- from the HD2 Enemy Codex (2026-09-28): every enemy model with armour Light (2) or more that wasn't listed above,
--- at its wiki armour value (the body's armour, where shots land); parts that attach to a bigger enemy (guns, plates,
+-- from the HD2 Enemy Codex (2026-09-28): every enemy model with armor Light (2) or more that wasn't listed above,
+-- at its wiki armor value (the body's armor, where shots land); parts that attach to a bigger enemy (guns, plates,
 -- packs) carry that enemy's rule. Names as checked by a tester in the Codex. Gatekeepers and Veracitors stay off the
--- list on purpose (their pilots are Light and their shields can be brought down); anything under Light is not armour
--- What counts is the armour where the shots land: Hive Guards (armoured front, the rest of the body exposed) and the
--- Spewers (a little face armour, and only on higher difficulties) are hit mostly where they are unarmoured, and Alpha
--- and Brood Commanders are only lightly armoured, so they are left off (named in LABELS instead)
+-- list on purpose (their pilots are Light and their shields can be brought down); anything under Light is not armor
+-- What counts is the armor where the shots land: Hive Guards (armored front, the rest of the body exposed) and the
+-- Spewers (a little face armor, and only on higher difficulties) are hit mostly where they are unarmoured, and Alpha
+-- and Brood Commanders are only lightly armored, so they are left off (named in LABELS instead)
 armor('56b7f620948be11e', 4, 'Anti-Air Emplacement')   -- cyborg_turret_aa_base
 armor('9b6c199030d86085', 4, 'Emplacement base')   -- (4.5, Codex check) env_cyborg/cyborg_turret_base: the base under the Anti-Air and Mortar Emplacements and the Bunker Turret, AV4
 armor('2c1a7790c435fd67', 2, 'Automaton MG Emplacement')   -- cyborg_emplacement_mg
@@ -232,12 +232,12 @@ armor('a5b106ba5d813094', 5, 'Hive Lord (l leg)')   -- cha_hive_lord_l_leg
 armor('cbddb06fa202b2a4', 5, 'Hive Lord (shard b 02)')   -- cha_hive_lord_shard_b_02
 armor('fecada76a501af4c', 5, 'Hive Lord (shard b 01)')   -- cha_hive_lord_shard_b_01
 
--- the highest armour each dog can hurt (its armour penetration)
+-- the highest armor each dog can hurt (its armor penetration)
 local PEN = { ['Rover'] = 2, ['Guard Dog'] = 3, ['K-9'] = 7 }
 -- (sentries carry their own 'pen' in SENTRIES: machine gun and Gatling 3, Laser 4 (Heavy); those without one - the
 -- anti-tank weapons and mortars - shoot everything)
 
--- switched on by the optional 'Armour skipping' part of the mod (a tiny second addon that sets this flag); read
+-- switched on by the optional 'Armor skipping' part of the mod (a tiny second addon that sets this flag); read
 -- every frame, so load order does not matter
 local armor_state
 local function cannot_hurt(dog, c)
