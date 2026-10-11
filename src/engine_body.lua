@@ -91,7 +91,11 @@ local function write_counts(f, title, t)
   for _, k in ipairs(keys) do f:write(string.format('  %-34s %d\n', k, t[k])) end
 end
 local function mmss(s) return string.format('%dm%02ds', math.floor(s / 60), math.floor(s % 60)) end
-local function write_log_to(f)
+local function write_log()
+  session.dirty = false
+  if not LOGDIR then return end
+  local f = io.open(LOGDIR .. '\\SmarterGuardDogsAndSentries.log', 'w')
+  if not f then return end
   f:write('Smarter Guard Dogs & Sentries ' .. VERSION .. (READ_ONLY and ' (read-only diagnostic build: actions below were NOT carried out)' or '') .. '\n')
   f:write('started ' .. tostring(session.started) .. ', running for ' .. mmss(os.clock() - T0) .. '\n')
   for _, n in ipairs(startup_notes) do f:write(n .. '\n') end
@@ -155,16 +159,7 @@ local function write_log_to(f)
   end
   f:write('recent events (last 60):\n')
   for _, e in ipairs(session.events) do f:write('  ' .. e .. '\n') end
-end
--- ((4.6.6 review) the file is always closed, and an error while writing it is reported to the caller)
-local function write_log()
-  session.dirty = false
-  if not LOGDIR then return end
-  local f = io.open(LOGDIR .. '\\SmarterGuardDogsAndSentries.log', 'w')
-  if not f then return end
-  local ok, err = pcall(write_log_to, f)
   f:close()
-  if not ok then error(err, 0) end
 end
 
 -- ======================================================================================================
@@ -292,7 +287,7 @@ for h, n in pairs({
   ['856e9710e45e760f'] = 'Trooper (jump pack, melee)', d37e8d120d2836e3 = 'Factory Strider',
 }) do LABELS[type_hash(h)] = n end
 -- (4.0) names from the HD2 Enemy Codex (the enemy models matched to their wiki pages; names checked by a tester);
--- armored enemies are named by the armor list (engine_armor.lua) instead
+-- armoured enemies are named by the armour list (engine_armor.lua) instead
 for h, n in pairs({
   ['67381f685e9b69a8'] = 'Agitator', ['9f44121c554dae89'] = 'Agitator',
   ['4fb6077f1597691d'] = 'Berserker (chainsaw)', ['54e107dacf6929cb'] = 'Berserker', a6a68d8af177f3a1 = 'Berserker',
@@ -343,20 +338,20 @@ local DOG_BY_PACK = {}
 for _, d in ipairs(DOGS) do DOG_BY_PACK[d.pack] = d end
 
 -- Sentries (4.0). Keyed by the sentry's entity type (the hash of its unit name, e.g. hellpod/turret_machinegun_gpmg;
--- the Gatling is hellpod/turret/gatling_turret) and checked against its AI behavior id where known.
---  line/spread: how far (meters) a shot line must stay from a body, plus this much per meter from the muzzle
---  splash: the shot explodes; nobody may stand within this many meters of the enemy
---  min_range: it can't fire while an enemy is this close to it (meters; the rocket sentry, 10 m per the wiki): a red
+-- the Gatling is hellpod/turret/gatling_turret) and checked against its AI behaviour id where known.
+--  line/spread: how far (metres) a shot line must stay from a body, plus this much per metre from the muzzle
+--  splash: the shot explodes; nobody may stand within this many metres of the enemy
+--  min_range: it can't fire while an enemy is this close to it (metres; the rocket sentry, 10 m per the wiki): a red
 --  ring of that radius flashes around it meanwhile
 --  blast: mortars lob shells in an arc, so there is no line to check; nobody may stand within this of the enemy
 --  sweep: keeps firing while it turns to its next target, so the turn must not pass over anyone either
 --  barrel_axis: which axis of its muzzle part is the barrel, when known from testing (otherwise learned in play)
---  pen: the heaviest armor it can hurt (armor skipping); none = shoots everything the game lets it
---  prefer: 'heavy' = armored enemies first (rocket, autocannon), 'light' = unarmoured enemies first (machine gun, Gatling)
+--  pen: the heaviest armour it can hurt (armour skipping); none = shoots everything the game lets it
+--  prefer: 'heavy' = armoured enemies first (rocket, autocannon), 'light' = unarmoured enemies first (machine gun, Gatling)
 --  heat: it overheats (Laser Sentry): rested before it burns out
 --  spreads_fire: sets enemies alight and moves on, like the Rover (Laser Sentry); fire_node: its AI step while firing;
 --  spares_helldivers: it would target helldivers itself (Tesla Tower): yours are hidden from it; ring: instead of a laser, a
---  ring of this radius (meters) around it, green while it engages and faint green while idle, plus the laser to its target
+--  ring of this radius (metres) around it, green while it engages and faint green while idle, plus the laser to its target
 --  no_laser: no targeting laser (the mortars: they lob over cover, so their line is rarely in view; a tester's call)
 --  salvo_node: an AI step of its own (besides step 10) in which it won't choose again: only safety stops are asked for then
 --  hits_carried: may shoot enemies still aboard a dropship (rocket, autocannon: the splash hurts the dropship too);
@@ -365,7 +360,7 @@ for _, d in ipairs(DOGS) do DOG_BY_PACK[d.pack] = d end
 --  loss_time (4.6.3): its AI record's +408 holds the time it lost its target (it fires on at the spot for 1 s after; since 4.6.5 that time is moved back for every dog and sentry kind but the salvo guns, so this flag only documents where it was first found);
 --    found on the Supply FRV gun's AI and the Gatling's, which the Resupply Pod gun also runs
 --  air_first: gunships and Stingrays before everything else (Gatling, autocannon, rocket, Laser)
---  reach (4.6.4): its range per the wiki (meters): only enemies this close count as a better target (Target Prioritization);
+--  reach (4.6.4): its range per the wiki (metres): only enemies this close count as a better target (Target Prioritization);
 --    without it 100 m (Autocannon, Rocket)
 --  barrel_min (4.6.4): the match its barrel axis needs to be learned (default 0.97): the Flame Sentry's arcing stream
 --    only lines up with its barrel to about 0.969 (a 4.6.3 Tester log), so its turns went unchecked
@@ -383,7 +378,7 @@ local SENTRIES = {
   { name = 'Laser Sentry', type = type_hash('56070f36cfffa8a8'), ai = 308, line = 0.35, spread = 0.002, sweep = true, barrel_axis = 2, pen = 4, heat = { cap = 250, rate = 11, cool = 3.8 },
     reach = 50, prefer = 'light', air_first = true, spreads_fire = true, fire_node = 13 },   -- (ours runs along its barrel, over its own beam, turning with it)
   { name = 'Flame Sentry', type = type_hash('820cc3bafe962858'), ai = 207, line = 1.0, spread = 0.03, splash = 2.5, sweep = true,
-    range = 30, prefer = 'near', spreads_fire = 'keep', barrel_min = 0.95 },   -- ('range' = meters from its muzzle: 4.5.2 set 20, a tester's call as the game let it pick
+    range = 30, prefer = 'near', spreads_fire = 'keep', barrel_min = 0.95 },   -- ('range' = metres from its muzzle: 4.5.2 set 20, a tester's call as the game let it pick
     -- enemies well past its flames; 4.6.1 30, a tester's call as its flames reach about 34 m. 'near': closest first, no armor tiers;
     -- 4.6.2 'keep': it moves on from an enemy it has set alight to the next unlit one, a tester's call)
   -- (4.0) the Tesla Tower (hellpod/tesla_turret): its arc reaches 20 m and chains from its target to whoever stands
@@ -403,10 +398,10 @@ local SENTRIES = {
   { name = 'Mortar Sentry', type = type_hash('51a0812e3bce2d74'), ai = 322, blast = 13, sentry_blast = 7, no_laser = true },   -- (AI 322 in game, Test 27 log)
   { name = 'EMS Mortar Sentry', type = type_hash('b2053a1838092f8b'), ai = 324, blast = 12, sentry_blast = 2.5, no_laser = true },   -- (AI 324 in game, Test 28 log)
   -- (5.0) the guns that come with a resupply pod (Armed Resupply Pods booster) and on the M-103 Supply FRV: both an
-  -- automatic AR-23P Liberator Penetrator (medium armor penetration, 640 rpm, ~120-140 rounds, 30 m), run on the Gatling's
+  -- automatic AR-23P Liberator Penetrator (medium armour penetration, 640 rpm, ~120-140 rounds, 30 m), run on the Gatling's
   -- AI template. Types from a 4.0.6 Test 8 log (AI 213 and 212); their units are unnamed, found in the resupply pod's
   -- archive (263277e5added56c, with the ammo rack) and the Supply FRV's (149f685717737cae). Treated like the machine gun:
-  -- skips armor it can't hurt (saving its rounds), short bursts at Heavy Devastators, unarmoured enemies first. 'ais':
+  -- skips armour it can't hurt (saving its rounds), short bursts at Heavy Devastators, unarmoured enemies first. 'ais':
   -- either of the Gatling template's two ids is accepted. The FRV's gun moves with the vehicle and fires past its driver
   { name = 'Resupply Pod Gun', mount = true, type = type_hash('73681ffd58fa1a90'), ai = 213, ais = { [212] = true, [213] = true }, line = 0.45, spread = 0.01, sweep = true, barrel_axis = 2, pen = 3, bursts = true, loss_time = true, reach = 75, prefer = 'light',
     turn_hold = 30 },   -- (4.6.2: as the Supply FRV gun, whose AI it runs - turns to an enemy far round without firing)
@@ -419,7 +414,7 @@ local SENTRIES = {
 }
 local SENTRY_BY_TYPE = {}
 for _, d in ipairs(SENTRIES) do d.sentry = true; SENTRY_BY_TYPE[d.type] = d end
--- AI behavior ids built on the game's sentry template (from the game code): anything else with one of these that
+-- AI behaviour ids built on the game's sentry template (from the game code): anything else with one of these that
 -- turns up on your side is reported in the log, so a missing sentry can be added
 local SENTRY_AI = { [5] = true, [207] = true, [212] = true, [213] = true, [308] = true, [312] = true, [319] = true, [320] = true,
   [321] = true, [322] = true, [323] = true, [324] = true, [603] = true, [611] = true, [661] = true, [680] = true, [685] = true }

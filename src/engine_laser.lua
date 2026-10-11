@@ -8,14 +8,14 @@
 -- this flag); it is read every frame, so load order does not matter
 local function laser_wanted() return rawget(_G, 'SmarterGuardDogsLaser') == true end
 local RED_SECONDS = 0.6         -- how long the red warning stays up after the safety steps in
--- (4.0: colors about 25% dimmer than before, a tester's call; the sentries' rings are a little brighter, see
+-- (4.0: colours about 25% dimmer than before, a tester's call; the sentries' rings are a little brighter, see
 -- engine_sentry.lua)
 local GREEN = { 150, 23, 113, 30 }   -- alpha, red, green, blue: laser-pointer green
 local RED = { 170, 128, 19, 19 }
 local YELLOW = { 170, 173, 150, 15 }   -- a shot stopped because the target went out of sight (cover or smoke)
-local LASER_RISE = 0.0               -- meters above the drone's center where the beam starts
-local LASER_FORWARD = 0.45           -- meters out from the drone's center toward its target (its front face)
-local AIM_RISE = 0.5                 -- meters above an enemy's base when not following a barrel (low: most bugs are small);
+local LASER_RISE = 0.0               -- metres above the drone's centre where the beam starts
+local LASER_FORWARD = 0.45           -- metres out from the drone's centre toward its target (its front face)
+local AIM_RISE = 0.5                 -- metres above an enemy's base when not following a barrel (low: most bugs are small);
                                      -- a dog can set its own (the Guard Dog's shots land ~1.2-1.4 m up, measured in game)
 local ATTACK_STEPS = { [6] = true, [7] = true }   -- the dog's AI steps for lining up a shot and firing
 local FIRE_STEP = 7                               -- the step where it is actually shooting
@@ -23,7 +23,7 @@ local FLASH_HZ = 6
 
 local laser = { state = 'not started', worlds = {} }
 -- (4.5.3) Laser Brightness (the option's sub-options, or Bingus' Mod Options Menu): a multiplier on every beam's and ring's
--- color - the lines' red, green and blue (the engine ignores their transparency), the glow's transparency. 1 = as
+-- colour - the lines' red, green and blue (the engine ignores their transparency), the glow's transparency. 1 = as
 -- before; read every frame
 laser.brightness = function()
   local b = rawget(_G, 'SmarterGuardDogsLaserBrightness')
@@ -32,24 +32,24 @@ laser.brightness = function()
 end
 local SR = rawget(_G, 'stingray')
 
--- (4.0.1) how a beam looks. The engine draws 1-pixel lines, ignores their transparency and renders their colors
+-- (4.0.1) how a beam looks. The engine draws 1-pixel lines, ignores their transparency and renders their colours
 -- far brighter than given (Test 2 and 4 screenshots: every green came out as pure neon green), so a beam is a thin core
 -- line with a strand 4 mm to either side of it: a real beam's width, which perspective makes about 3 pixels up close
 -- and a single pixel far away. (Test 1-4 kept the width constant on screen from an estimate of the camera's position;
 -- with you far from the sentry, e.g. dead, that estimate put the strands centimetres apart and the beam split in two.)
--- (4.5) One solid color from end to end (the 4.0.1-4.0.6 fade toward the far end is gone, a tester's call), and the
+-- (4.5) One solid colour from end to end (the 4.0.1-4.0.6 fade toward the far end is gone, a tester's call), and the
 -- green is a neon laser-pointer green, (0,200,20). A beam on a target ends in a small cross just in front of the
 -- enemy. The line object is depth-tested: walls and terrain hide the beam like a real one.
 do
   local BEAM = {
-    side = 0.004,     -- the side strands: meters from the core
-    dot = 0.03,       -- the cross on the target: its half-size in meters
-    dot_back = 0.3,   -- the cross sits this far in front of the aim point (meters, toward the beam's start)
+    side = 0.004,     -- the side strands: metres from the core
+    dot = 0.03,       -- the cross on the target: its half-size in metres
+    dot_back = 0.3,   -- the cross sits this far in front of the aim point (metres, toward the beam's start)
   }
-  -- colors (alpha, red, green, blue; the engine ignores the alpha) by the beam's base color: core, side strands,
+  -- colours (alpha, red, green, blue; the engine ignores the alpha) by the beam's base colour: core, side strands,
   -- the cross on the target
   -- (4.5: green is (0,200,20) throughout, a tester's pick, shown as neon green in game; red and yellow keep
-  -- the color-chart shades a tester picked in 4.0.1: core post 9, sides post 8, cross post 10)
+  -- the colour-chart shades a tester picked in 4.0.1: core post 9, sides post 8, cross post 10)
   local NEON = { 255, 0, 200, 20 }
   local STYLE = {
     [GREEN] = { core = NEON, side = NEON, dot = NEON },
@@ -66,7 +66,7 @@ do
     return ux, uy, 0, -dz * uy, dz * ux, dx * uy - dy * ux
   end
   laser.styled = function(b) return STYLE[b.argb] ~= nil end
-  -- adds one styled beam: line(color, x1, y1, z1, x2, y2, z2) draws one line. 3 lines (the core and two side strands),
+  -- adds one styled beam: line(colour, x1, y1, z1, x2, y2, z2) draws one line. 3 lines (the core and two side strands),
   -- plus 2 for the cross; the core goes last, on top
   laser.draw_styled = function(b, line)
     local S = STYLE[b.argb]
@@ -132,7 +132,7 @@ local function laser_ready()
   local okv, v = pcall(SR.Vector3, 1, 2, 3)
   local okc, c = pcall(SR.Color, 255, 1, 2, 3)
   if not (okv and v ~= nil and okc and c ~= nil) then
-    laser.state, laser.why = 'off', 'cannot build engine vectors/colors: ' .. tostring(okv and okc or (not okv and v) or c)
+    laser.state, laser.why = 'off', 'cannot build engine vectors/colours: ' .. tostring(okv and okc or (not okv and v) or c)
     note('laser: off (' .. laser.why .. ')')
     return false
   end
@@ -204,7 +204,7 @@ local function laser_draw_body(beams, redraw)
             if BR == 1 then c = SR.Color(a[1], a[2], a[3], a[4])
             else
               -- (4.6.3 review) past full strength a channel can't go brighter (the neon green's 200 reached 255 at about
-              -- 130%, so Bright and Brightest looked the same): what is left over whitens the color instead, as the
+              -- 130%, so Bright and Brightest looked the same): what is left over whitens the colour instead, as the
               -- glow does
               local r, g, b = a[2] * BR, a[3] * BR, a[4] * BR
               local m = math.max(r, g, b)
@@ -221,7 +221,7 @@ local function laser_draw_body(beams, redraw)
         end
         if not redraw then
           LO.reset(lo)
-          -- (each color is built once per frame)
+          -- (each colour is built once per frame)
           local function line(a, x1, y1, z1, x2, y2, z2) LO.add_line(lo, colour(a), V(x1, y1, z1), V(x2, y2, z2)) end
           -- (4.5: with the glow chosen, the dogs' and sentries' beams are left to it)
           local lines = not (laser.glow and laser.glow.on())
@@ -299,13 +299,13 @@ end
 do
   local G = { guis = {}, ids = {} }   -- per world: its GUI, and (retained GUI) the triangles drawn last frame
   laser.glow = G
-  -- alpha, red, green, blue by the beam's color: the narrow core, the wide halo, the spot on the target
+  -- alpha, red, green, blue by the beam's colour: the narrow core, the wide halo, the spot on the target
   local LOOK = {
     [GREEN] = { core = { 210, 110, 255, 130 }, halo = { 55, 60, 255, 90 }, dot = { 230, 170, 255, 170 } },
     [RED] = { core = { 210, 255, 90, 80 }, halo = { 55, 255, 50, 40 }, dot = { 230, 255, 160, 150 } },
     [YELLOW] = { core = { 210, 255, 230, 90 }, halo = { 55, 255, 210, 50 }, dot = { 230, 255, 240, 160 } },
   }
-  local WIDTH = { core = 0.006, halo = 0.03 }   -- half-widths in meters
+  local WIDTH = { core = 0.006, halo = 0.03 }   -- half-widths in metres
   local PIECES, FADE_TO, SPOT = 10, 0.3, 0.03   -- alpha falls to this share at the far end; the spot's half-size
   local PARTS = { 'halo', 'core' }              -- (the core drawn last, on top)
   local LOOKS = {}
@@ -382,7 +382,7 @@ do
       local c = colours[a]
       if not c then
         -- (4.5.3 Test 11) brightness on the glow: its transparency alone hardly showed (a tester: the setting didn't
-        -- change it - the core is nearly solid already), so dimmer also darkens its color and brighter whitens it
+        -- change it - the core is nearly solid already), so dimmer also darkens its colour and brighter whitens it
         -- toward its hottest; the strips are widened too (WIDTH below)
         local r, gg, bb = a[2], a[3], a[4]
         if BR < 1 then r, gg, bb = r * BR, gg * BR, bb * BR
@@ -478,7 +478,7 @@ end
 -- ------------------------------------------------------------------------------------------------------
 -- min_cos: how closely a part must track the enemy to count as the barrel (0.997 = within ~4 degrees on
 -- average); keep_cos: below this, while firing at an enemy in plain view, the part is dropped and the search
--- starts again; off: the laser end may sit at most this far (meters, or this share of the distance) from the
+-- starts again; off: the laser end may sit at most this far (metres, or this share of the distance) from the
 -- enemy, otherwise it falls back to pointing straight at it
 local GUN = { nodes = 40, reach = 2.5, frames = 24, min_cos = 0.997, keep_cos = 0.985, min_range = 8, off = 1.5, off_share = 0.06,
   fire_cos = 0.95, fire_keep = 0.9, tries = 6 }
@@ -629,7 +629,7 @@ local function gun_point(st, to, learn)
 end
 
 -- what to show for this frame
-local DOCKED = 1.2   -- meters (level) between the drone and you: it has flown back to the backpack to reload
+local DOCKED = 1.2   -- metres (level) between the drone and you: it has flown back to the backpack to reload
 
 -- adds the dog's beam (if any) to 'beams'; the main loop draws the dog's and the sentries' beams together
 local function laser_frame(st, beams, safety_t, safety_enemy, safety_step, cover_t, cover_enemy, cover_step)

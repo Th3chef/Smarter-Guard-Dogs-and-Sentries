@@ -3,7 +3,7 @@
 -- Research recorder (1.5 test builds): writes SmarterGuardDogsAndSentries-research.log next to the
 -- status log (%LOCALAPPDATA%\CowboyBingus\Helldivers2\Logs) with what the
 -- dog targets, each enemy's unit type and the raw fields of its perception entry, so line-of-sight and
--- armor rules can be worked out from real missions. Reads only. Press F8 in game to drop a marker line
+-- armour rules can be worked out from real missions. Reads only. Press F8 in game to drop a marker line
 -- ("MARK") at a moment worth looking at, e.g. the dog shooting through a wall or at a Hulk.
 -- ======================================================================================================
 local RESEARCH = false
