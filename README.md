@@ -12,7 +12,7 @@ Smarter Guard Dogs & Sentries makes the shooting guard dog backpacks and your se
 
 - **Never shoots through you or your teammates:** it looks ahead when you spin around, and fires again the moment you're out of its way. The Safety option chooses who it protects: you and your teammates, only you, or only your teammates. The K-9 also avoids arcs that would chain back to you or a teammate.
 - **Closest threat first, without the hesitation (Target Prioritization):** the Guard Dog and K-9 get a burst off before they're pulled to the next closer enemy, then catch up.
-- **No shooting the dead:** it moves on the moment its target dies.
+- **No shooting the dead:** it moves on the moment its target dies, and stops firing at the spot the moment its target is lost.
 - **Engages at once:** the moment an enemy it can shoot comes into view, it picks it and opens fire instead of waiting on the game's own re-pick timer.
 - **No wasted aiming:** it stops firing the moment its target ducks behind cover, doesn't pick enemies it can't see, and quickly gives up on an enemy it keeps lining up without getting a shot.
 - **Skips armor it can't hurt (Armor Intelligence):** the Guard Dog leaves Hulks, Chargers, Tanks, emplacements, bunker turrets and other Heavy armor alone, and only fires short suppressing bursts at Heavy Devastators. The Guard Dog and Rover also leave the guns on Factory Striders and Vox Engines alone. The Rover also leaves Scout Striders alone but still burns Devastators' legs. The K-9 skips nothing.
@@ -21,9 +21,10 @@ Smarter Guard Dogs & Sentries makes the shooting guard dog backpacks and your se
 
 ## Sentry features
 
-- **Never fires through you or your teammates:** every sentry holds fire while you're in its line of fire, and the Machine Gun, Gatling, Laser and Flame sentries won't swing their fire across you while turning to the next target. The Autocannon and Rocket sentries won't fire at an enemy close enough to you to catch you in the blast, and the Mortar and EMS Mortar sentries won't shell enemies next to you.
+- **Never fires through you or your teammates:** every sentry holds fire while you're in its line of fire (also while you pilot an exosuit), and the Machine Gun, Gatling, Laser and Flame sentries won't swing their fire across you while turning to the next target. The Autocannon and Rocket sentries won't fire at an enemy close enough to you to catch you in the blast, and the Mortar and EMS Mortar sentries won't shell enemies next to you.
+- **Never fires through other sentries (Sentry Safety):** your sentries hold fire while another sentry, yours or a teammate's, is in their line of fire, and don't swing their fire across one. The Rocket, Autocannon and Flame sentries won't fire at an enemy right next to a sentry, and the Mortar won't shell enemies within 7 m of one. (The Tesla Tower's arc doesn't hurt sentries.)
 - **No firing into walls:** a sentry drops a target that went behind cover and picks one it can hit.
-- **No shooting the dead:** a sentry moves on the moment its target dies.
+- **No shooting the dead:** a sentry moves on the moment its target dies, and stops firing at the spot the moment its target is lost (the game kept it shooting where it was for about a second).
 - **Self-defense first (Target Prioritization):** an enemy right at the sentry that it can hurt is dealt with before anything else, so the sentry isn't wrecked while it chases a better target.
 - **Gunships first (Target Prioritization):** the Gatling, Autocannon, Rocket and Laser sentries go for Gunships (and Stingrays on Illuminate missions) before anything else.
 - **The right target for the gun (Target Prioritization):** the Rocket and Autocannon sentries go for Heavy armor first; the Machine Gun, Gatling and Laser sentries go for everything lighter first. An enemy right next to you always stays the target.
@@ -50,6 +51,7 @@ Only your own dog and sentries are affected (the Safety option also protects the
 - **Sentries** - your sentries and the guns on resupply pods and the Supply FRV. Choose *All sentries* or *All but the Tesla Tower*, or turn off to leave them to the game.
 - **Intelligence** - choose *Armor Intelligence and Target Prioritization*, *Only Armor Intelligence* or *Only Target Prioritization*, or turn off to leave both to the game. Armor Intelligence: skipping armor they can't hurt, short bursts at Heavy Devastators and skipping dropships. Target Prioritization: the closest threat first for the dogs; self-defense, Gunships and the armor that suits the gun first for the sentries (the closest first for the Flame Sentry).
 - **Safety** - choose who they never fire through: *You and your teammates*, *Only you* or *Only your teammates*. Turn off at your own risk.
+- **Sentry Safety** - your sentries don't fire through other sentries, yours or your teammates'. On by default; turn off to let them.
 - **Targeting Laser** - choose *Line* (the default) or *Glow*, or turn off to hide the laser.
 - **Laser Brightness** - choose *Normal (100%)* (the default), *Dim (50%)*, *Softer (75%)*, *Bright (150%)* or *Brightest (200%)*.
 
@@ -65,7 +67,7 @@ Get the latest zip from the [Releases](../../releases/latest) page (the `Smarter
 
 1. Install Bingus Shared Loader v15 or newer.
 2. Remove any older version of Smarter Guard Dogs (& Sentries).
-3. Add Smarter-Guard-Dogs-and-Sentries-4.6.4.zip in Arsenal or the HD2 Mod Manager and check the options you want.
+3. Add Smarter-Guard-Dogs-and-Sentries-4.6.5.zip in Arsenal or the HD2 Mod Manager and check the options you want (updating: make sure the new Sentry Safety option is checked).
 4. Purge, then Deploy (always both, every time you install or update), then restart the game.
 
 ## Uninstall
@@ -84,11 +86,12 @@ Remove it in your mod manager, then Purge and Deploy. Nothing is left behind in 
 - The game still decides when to shoot. The dog may hold fire on enemies that haven't engaged you yet.
 - Brief pauses when you step into the line of fire, by design.
 - Line of sight updates about twice a second, so a dog or sentry may briefly fire at cover or hesitate as enemies duck in and out of view.
-- Sentries sometimes finish a salvo or burst on their old target before switching.
+- Sentries sometimes finish a salvo or burst on their old target before switching, and the Autocannon and Rocket sentries may fire at the spot for up to a second after a kill (stopping that would cut their salvos short).
 - The Tesla Tower can't be stopped once it has started a zap, so a helldiver who steps into its path at that moment can still be hit. Going prone still keeps you safe, as in the base game.
 - The Glow laser shows through walls and objects (the game draws it on top of the world). Choose Line for a beam that walls hide.
 - The Rocket Sentry can't fire while an enemy is within about 10 m of it (the game's rule); a red ring flashes around it then.
-- Teammates' sentries run on their own game and aren't changed.
+- Teammates' sentries run on their own game and aren't changed (yours still won't fire through them).
+- Teammates piloting an exosuit aren't protected yet (you are).
 - Safety for teammates may briefly hold fire near a teammate's body right after they reinforce.
 - A major game update may switch the mod off until it's updated.
 

@@ -1,5 +1,9 @@
 # Changelog
 
+## 4.6.5
+
+Every sentry and guard dog now stops firing at the spot the moment its target is lost (the game kept them shooting where it was for about a second, so a Machine Gun Sentry could still hit a helldiver who stepped in front of it). New Sentry Safety option: your sentries don't fire through, swing their fire across or blast other sentries, yours or your teammates'. The safety now also covers you while you pilot an exosuit.
+
 ## 4.6.4
 
 The Rocket Sentry fires at gunships whether they're moving or hovering. Works alongside Bingus' Laser Sentry Cooldown (an overheated Laser Sentry cools down and comes back; this mod still stops it before it overheats). Target Prioritization uses each sentry's real range, the Mortar and EMS Mortar safety distances match their real blast (13 m and 12 m), the Flame Sentry's turns are safety-checked reliably, and a safety stop is never delayed by another redirect. Lighter on your PC, faster start-up, holds up better after game patches, and the log numbers each sentry.
