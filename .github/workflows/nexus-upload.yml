@@ -23,6 +23,8 @@ env:
 
 jobs:
   nexus:
+    # (4.6.6 review) a pre-release (a test build put up for testers) is never uploaded to Nexus
+    if: ${{ github.event_name != 'release' || !github.event.release.prerelease }}
     runs-on: ubuntu-latest
     steps:
       - name: Check the API key is set
@@ -46,6 +48,17 @@ jobs:
           FILE="Smarter-Guard-Dogs-and-Sentries-${VERSION}.zip"
           gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$FILE"
           test -s "$FILE"
+          # (4.6.6 review) only the release build goes up as the main file: the live GUID, this version in its name, and
+          # the core with every test switch off (a renamed test or Tester zip, or a build with TESTER left on, stops here)
+          unzip -tq "$FILE"
+          unzip -p "$FILE" manifest.json | grep -q '"Guid": "6f1d2c8e-5a47-4b93-9e0a-3c7b1f4d8a21"' \
+            || { echo "::error::$FILE is not the release build (wrong or test GUID in manifest.json)."; exit 1; }
+          unzip -p "$FILE" manifest.json | grep -q "\"Name\": \"Smarter Guard Dogs & Sentries $VERSION\"" \
+            || { echo "::error::$FILE's manifest name is not 'Smarter Guard Dogs & Sentries $VERSION' (a test or Tester build?)."; exit 1; }
+          CORE="$(unzip -p "$FILE" "Smarter Guard Dogs/9ba626afa44a3aa3.patch_0" | tr -d '\000')"
+          for FLAG in "local TESTER = false" "local TEST_BUILD = false" "local READ_ONLY = false" "local RESEARCH = false"; do
+            grep -qF "$FLAG" <<< "$CORE" || { echo "::error::$FILE: the core doesn't have '$FLAG' (a test, Tester or diagnostic build?)."; exit 1; }
+          done
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
           echo "FILE=$FILE" >> "$GITHUB_ENV"
 
