@@ -1,5 +1,9 @@
 # Changelog
 
+## 4.6.6
+
+The Laser Sentry no longer flicks between targets or ignores enemies close by: it gives each enemy about half a second of beam before moving on, keeps firing at burning enemies within 15 m of you or itself, never sits idle while enemies are in reach, and stays on Chargers, Bile Titans and other heavy armor until they're dead. A safety stop is never given up on, even when a sentry or the dog keeps its target. Enemies hidden from a sentry stay hidden while the game moves its records, and the dog no longer briefly shows them again when a read fails. Faster start-up after a game patch. The log notes any target a sentry keeps firing at that the mod doesn't recognize.
+
 ## 4.6.5
 
 Every sentry and guard dog now stops firing at the spot the moment its target is lost (the game kept them shooting where it was for about a second, so a Machine Gun Sentry could still hit a helldiver who stepped in front of it). New Sentry Safety option: your sentries don't fire through, swing their fire across or blast other sentries, yours or your teammates'. The safety now also covers you while you pilot an exosuit.
