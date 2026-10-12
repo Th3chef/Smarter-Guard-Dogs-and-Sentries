@@ -593,12 +593,16 @@ function read_state()
     fire_pose = gp and gp.pose
     if not fire_pose then fire_node = nil end
   end
+  -- ((4.6.7 review) your position for the safety: when it can't be read for a moment, the last one read (up to 0.5 s
+  -- old) - before, that frame had no safety check at all)
+  local me = unit_position(ctx.player_unit, true)
+  if me then ctx.me_last, ctx.me_t = me, t elseif ctx.me_last and t - (ctx.me_t or -99) < 0.5 then me = ctx.me_last end
   return {
     dog = dog, key = ctx.key,
     rec_addr = rec_addr, rec_head = rec:sub(1, 4), node = u32(rec, 8), target = target,
     synced = target ~= 0 and u32(tstate, 0) == target and rec:byte(121) == 1 and bit.band(u32(rec, 96), 1) ~= 0,
     candidates = candidates, now = now, deadline = deadline,
-    player_pos = unit_position(ctx.player_unit, true), drone_pos = drone_pos, fire_node = fire_node, fire_pose = fire_pose,
+    player_pos = me, drone_pos = drone_pos, fire_node = fire_node, fire_pose = fire_pose,
     -- (4.5.3 Test 12) where the game aims the dog's gun (its targeting state; already read): the laser's fallback
     -- points there, and test builds check the beam against it (only built with a fire node: nothing else uses it)
     aim = fire_node and target ~= 0 and u32(tstate, 0) == target and { f32(tstate, 20), f32(tstate, 24), f32(tstate, 28) } or nil,

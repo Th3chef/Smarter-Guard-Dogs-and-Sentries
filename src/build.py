@@ -33,7 +33,7 @@ def bright_source(v):
     return ('-- HD2-Addon: %s\n'
             '-- Smarter Guard Dogs & Sentries - Laser Brightness (optional part): the targeting laser at %d%%.\n'
             "rawset(_G, 'SmarterGuardDogsLaserBrightness', %s)\n" % (BRIGHT_MODULE, round(v * 100), repr(v))).encode('utf-8')
-VERSION = '4.6.6'
+VERSION = '4.6.7'
 NAME_SUFFIX = ''   # '' for releases, e.g. ' Test 3' for test builds
 ARCHIVE = '9ba626afa44a3aa3.patch_0'        # the game archive the shared loader reads addons from
 LUA_TYPE, MAGIC = 0xa14e8dfa2cd117e2, 0xF0000011
@@ -236,5 +236,15 @@ if __name__ == '__main__':
     if 'tester' in sys.argv[1:]: builds.append((False, True, '%s-%s%s-Tester.zip' % (FILE_BASE, VERSION, tag)))
     for ro, tester, fn in builds:
         pak, src = package(ro, os.path.join(out, fn), tester)
-        open(os.path.join(out, ('diag_' if ro else ('tester_' if tester else 'live_')) + 'smarter_guard_dogs.lua'), 'wb').write(src)
+        lua_path = os.path.join(out, ('diag_' if ro else ('tester_' if tester else 'live_')) + 'smarter_guard_dogs.lua')
+        open(lua_path, 'wb').write(src)
+        # ((4.6.7 review) every built chunk must load - LuaJIT's 200-locals / 60-upvalues limits only show when it is
+        # compiled, and the Tester can carry code the release doesn't): checked with the dev LuaJIT when it is there
+        lj = os.path.join(HERE, '..', 'luajit', 'src', 'luajit')
+        if os.path.exists(lj):
+            import subprocess
+            r = subprocess.run([lj, '-e', 'assert(loadfile(%r))' % lua_path.replace('\\', '/')], capture_output=True, text=True, timeout=60)
+            assert r.returncode == 0, '%s does not load: %s' % (os.path.basename(lua_path), r.stderr.strip())
+        else:
+            print('(LuaJIT not found next to the kit: the built chunks were not test-loaded)')
         print(fn, len(pak), 'bytes archive, resource', hex(resource_hash(MODULE)))

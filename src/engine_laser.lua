@@ -21,7 +21,10 @@ local ATTACK_STEPS = { [6] = true, [7] = true }   -- the dog's AI steps for lini
 local FIRE_STEP = 7                               -- the step where it is actually shooting
 local FLASH_HZ = 6
 
-local laser = { state = 'not started', worlds = {} }
+local laser = { state = 'not started', worlds = {},
+  -- (4.6.7 Test 1, the author: the Rover's laser shook while it aimed) seconds: how quickly a dog's beam end catches up
+  -- with where it should point (as BEAM_SMOOTH does for the sentries since 5.0 Test 14; the dogs had none)
+  dog_smooth = 0.1, dog_beam = {} }
 -- (4.5.3) Laser Brightness (the option's sub-options, or Bingus' Mod Options Menu): a multiplier on every beam's and ring's
 -- color - the lines' red, green and blue (the engine ignores their transparency), the glow's transparency. 1 = as
 -- before; read every frame
@@ -237,6 +240,7 @@ local function laser_draw_body(beams, redraw)
           if rings and not rlo then rlo = SR.World.create_line_object(w, false) end
           if rlo then
             LO.reset(rlo)
+            laser.ring_has = rings ~= nil and #rings > 0   -- ((4.6.7 review) whether it holds anything to show)
             local points = {}
             for _, ring in ipairs(rings or {}) do
               for k = 1, #ring do
@@ -249,7 +253,8 @@ local function laser_draw_body(beams, redraw)
             end
           end
         end
-        if rlo then keep_r[w] = rlo; LO.dispatch(w, rlo) end
+        -- ((4.6.7 review) an empty ring object isn't sent to the engine: lines only show on frames they are dispatched)
+        if rlo then keep_r[w] = rlo; if laser.ring_has then LO.dispatch(w, rlo) end end
         if laser.glow then laser.glow.draw(w, beams, redraw) end
         if #beams > 0 or rings then stats.laser_frames = stats.laser_frames + 1 end
       end
@@ -643,7 +648,43 @@ local function laser_frame(st, beams, safety_t, safety_enemy, safety_step, cover
   local t = os.clock()
   -- the beam leaves its barrel when that is known (from: the barrel part; on: its end is on the enemy, for the cross),
   -- otherwise the front of the drone, facing whatever it points at
-  local function beam(to, argb, from, on)
+  local function beam(to, argb, from, on, at)
+    -- (4.6.7 Test 1) the firing beam's end is smoothed over about a tenth of a second, so the game's aim point
+    -- wandering over the enemy doesn't shake it; a new target (or a gap) starts it afresh. What is smoothed is where
+    -- the end sits on the enemy (at: the enemy's aim spot), so it never trails behind a running enemy. The start
+    -- stays on the muzzle, so the beam never leaves the drone
+    -- ((4.6.7 review) the offset kept as plain numbers - no tables a frame but the smoothed end - and skipped with no
+    -- aim spot: smoothed in world space instead, the end would trail a running enemy)
+    if argb == GREEN and at then
+      local B = laser.dog_beam
+      local raw = to
+      local ox, oy, oz = raw[1] - at[1], raw[2] - at[2], raw[3] - at[3]
+      if B.ox and B.dog == st.dog.name and B.target == st.target and t - B.t < 0.25 then
+        local k = laser.dog_smooth > 0 and 1 - math.exp(-(t - B.t) / laser.dog_smooth) or 1
+        ox, oy, oz = B.ox + (ox - B.ox) * k, B.oy + (oy - B.oy) * k, B.oz + (oz - B.oz) * k
+        to = { at[1] + ox, at[2] + oy, at[3] + oz }
+        -- (Tester: how much the end moves a frame before and after, and the start; one line per dog every 200 frames,
+        -- up to 6 a session)
+        if TESTER and B.raw and B.from and from then
+          local L = laser.steady or {}
+          laser.steady = L
+          local S = L[st.dog.name] or { n = 0, raw = 0, out = 0, from = 0, logged = 0 }
+          L[st.dog.name] = S
+          local dr = math.sqrt((raw[1] - B.raw[1]) ^ 2 + (raw[2] - B.raw[2]) ^ 2 + (raw[3] - B.raw[3]) ^ 2)
+          local d1 = math.sqrt((to[1] - B.to[1]) ^ 2 + (to[2] - B.to[2]) ^ 2 + (to[3] - B.to[3]) ^ 2)
+          local df = math.sqrt((from[1] - B.from[1]) ^ 2 + (from[2] - B.from[2]) ^ 2 + (from[3] - B.from[3]) ^ 2)
+          if dr < 3 and df < 1 then S.n, S.raw, S.out, S.from = S.n + 1, S.raw + dr, S.out + d1, S.from + df end
+          if S.n >= 200 and S.logged < 6 then
+            S.logged = S.logged + 1
+            event(string.format('laser steadiness (test): %s beam end moved %.1f cm a frame before smoothing, %.1f cm after; its start %.1f cm (%d frames)',
+              st.dog.name, 100 * S.raw / S.n, 100 * S.out / S.n, 100 * S.from / S.n, S.n))
+            S.n, S.raw, S.out, S.from = 0, 0, 0, 0
+          end
+        end
+      end
+      B.ox, B.oy, B.oz, B.dog, B.target, B.t = ox, oy, oz, st.dog.name, st.target, t
+      if TESTER then B.to, B.raw, B.from = to, raw, from end   -- (the steadiness stat's only)
+    end
     if from then
       beams[#beams + 1] = { from = from, to = to, argb = argb, dot = argb == GREEN and on ~= false }
       return
@@ -685,7 +726,7 @@ local function laser_frame(st, beams, safety_t, safety_enemy, safety_step, cover
       if e2 and e2.pos then
         local to = { e2.pos[1], e2.pos[2], e2.pos[3] + (st.dog.aim_rise or AIM_RISE) }
         local gp, gfrom, gon = gun_point(st, to, false)
-        beam(gp or to, GREEN, gp and gfrom, gon)
+        beam(gp or to, GREEN, gp and gfrom, gon, to)
       end
     end
   elseif st.target ~= 0 and st.node == FIRE_STEP then   -- green only while it is actually firing
@@ -719,7 +760,7 @@ local function laser_frame(st, beams, safety_t, safety_enemy, safety_step, cover
           end
         end
       end
-      beam(gp or to, GREEN, gp and gfrom, gon)
+      beam(gp or to, GREEN, gp and gfrom, gon, to)
     end
   end
 end

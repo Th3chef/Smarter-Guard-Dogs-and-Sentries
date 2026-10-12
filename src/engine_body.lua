@@ -109,6 +109,10 @@ local function write_log_to(f)
   for name, d in pairs(session.dog_time) do
     f:write(string.format('  %-10s out %s, with a target %.0f%% of that, firing %.0f%% of the time it had one\n', name,
       mmss(d.out), d.out > 0 and 100 * d.targeted / d.out or 0, d.targeted > 0 and 100 * d.firing / d.targeted or 0))
+    if TESTER and (d.lu_n or d.lu_cut) then
+      f:write(string.format('             line-ups (test): %d to a first shot, average %.2f s, longest %.2f s; %d moved on before a shot\n',
+        d.lu_n or 0, (d.lu_sum or 0) / math.max(1, d.lu_n or 0), d.lu_max or 0, d.lu_cut or 0))
+    end
   end
   f:write(session.team.off and 'teammates: not checked (teammate safety option off)\n'
     or (session.team.max > 0 and string.format('teammates: up to %d seen at once, safety stops for a teammate: %d\n', session.team.max,
@@ -143,6 +147,9 @@ local function write_log_to(f)
   if TESTER and session.timing and session.timing.n > 0 then
     local T = session.timing
     f:write(string.format('mod cost per frame (test): average %.3f ms, highest %.2f ms, over 1 ms in %d of %d frames\n', T.sum / T.n, T.max, T.over, T.n))
+    for _, Pt in ipairs(T.parts or {}) do
+      if Pt.n > 0 then f:write(string.format('  %-28s %d times, average %.3f ms, highest %.2f ms, over 1 ms %d\n', Pt.name, Pt.n, Pt.sum / Pt.n, Pt.max, Pt.over)) end
+    end
   end
   if TESTER then write_counts(f, 'enemy types the dog picked (type id: times; for bug reports)', session.types) end
   if TESTER and next(session.steps) then write_counts(f, 'what the dog was doing while out (polls; AI step 6 = lining up, 7 = firing)', session.steps) end
@@ -160,11 +167,15 @@ end
 local function write_log()
   session.dirty = false
   if not LOGDIR then return end
+  -- ((4.6.7) built in memory first and written in one go: the file is open only for that one write)
+  local parts, n = {}, 0
+  local buf = { write = function(_, ...) for i = 1, select('#', ...) do n = n + 1; parts[n] = select(i, ...) end end }
+  local ok, err = pcall(write_log_to, buf)
+  if not ok then error(err, 0) end
   local f = io.open(LOGDIR .. '\\SmarterGuardDogsAndSentries.log', 'w')
   if not f then return end
-  local ok, err = pcall(write_log_to, f)
+  f:write(table.concat(parts, '', 1, n))
   f:close()
-  if not ok then error(err, 0) end
 end
 
 -- ======================================================================================================

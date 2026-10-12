@@ -243,7 +243,7 @@ local function resolve_layout()
   else
     local c, usable = cached()
     if c and usable and c.dll_hash == gsha and c.exe_hash == esha then L = c; note('layout: cached scan of this game version')
-    elseif c and c.dll_hash == gsha then note('layout: the cached scan is from another version of the mod') end
+    elseif c and c.dll_hash == gsha then note(c.mod ~= cache_tag() and 'layout: the cached scan is from another version of the mod' or 'layout: the cached scan is from another game build') end   -- ((4.6.7 review) which one)
     if not L then
       note('layout: new game version, scanning game code...')
       L = scan_layout(game, exe, gsha, esha)
