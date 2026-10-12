@@ -109,7 +109,6 @@ Thank you for diving with me!
 
 ## Credits
 
-- **retrox** - Laser Rover Targeting Optimization: the original idea and research (independent re-implementation, no shared code).
 - **Sentry Aim Retention (CowboyBingus)** - the retarget-on-loss idea.
 - **CowboyBingus** - Bingus Shared Loader.
 - Armor values: Helldivers Wiki.
