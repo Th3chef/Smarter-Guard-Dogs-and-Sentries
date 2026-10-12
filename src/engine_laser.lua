@@ -236,11 +236,13 @@ local function laser_draw_body(beams, redraw)
         LO.dispatch(w, lo)
         -- the rings: rebuilt when they change (a ring's segments share their end points: each point is made once)
         local rlo = laser.ring_lo and laser.ring_lo[w]
+        local emptied = false   -- (4.6.8) reset this frame: sent once more, even empty, so the old rings go
         if not redraw and (not same or (rings and not rlo)) then
           if rings and not rlo then rlo = SR.World.create_line_object(w, false) end
           if rlo then
             LO.reset(rlo)
             laser.ring_has = rings ~= nil and #rings > 0   -- ((4.6.7 review) whether it holds anything to show)
+            emptied = not laser.ring_has
             local points = {}
             for _, ring in ipairs(rings or {}) do
               for k = 1, #ring do
@@ -253,8 +255,11 @@ local function laser_draw_body(beams, redraw)
             end
           end
         end
-        -- ((4.6.7 review) an empty ring object isn't sent to the engine: lines only show on frames they are dispatched)
-        if rlo then keep_r[w] = rlo; if laser.ring_has then LO.dispatch(w, rlo) end end
+        -- ((4.6.7 review) an empty ring object isn't sent to the engine every frame. (4.6.8) But the engine keeps showing
+        -- a line object's last dispatch until it is dispatched again: 4.6.7 never sent the emptied object, so the last
+        -- rings (a Rocket Sentry's red minimum-range ring) stayed on screen for the rest of the session, ship and later
+        -- missions included. The frame it is emptied, it is sent once, empty)
+        if rlo then keep_r[w] = rlo; if laser.ring_has or emptied then LO.dispatch(w, rlo) end end
         if laser.glow then laser.glow.draw(w, beams, redraw) end
         if #beams > 0 or rings then stats.laser_frames = stats.laser_frames + 1 end
       end

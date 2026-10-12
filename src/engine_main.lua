@@ -121,7 +121,7 @@ local function tick()
   -- press isn't missed between the slower polls)
   if TESTER and SGD.status ~= 'active' then pcall(check_marker, nil) end
   if broken or t < next_poll then
-    -- (a frame the mod skips: the laser as it was - line objects are only drawn on the frames they are dispatched)
+    -- (a frame the mod skips: the laser as it was - sent again as they are)
     if not broken and laser_wanted() then laser.redraw() end
     return
   end
