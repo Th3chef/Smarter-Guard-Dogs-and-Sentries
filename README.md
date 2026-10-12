@@ -109,7 +109,6 @@ Thank you for diving with me!
 
 ## Credits
 
-- **Sentry Aim Retention (CowboyBingus)** - the retarget-on-loss idea.
 - **CowboyBingus** - Bingus Shared Loader.
 - Armor values: Helldivers Wiki.
 
