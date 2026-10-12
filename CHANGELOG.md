@@ -1,5 +1,9 @@
 # Changelog
 
+## 4.6.7
+
+The Rover gives each enemy about half a second of beam before moving on, so it spends much more of its time firing (it used to move on after a split second and spend about half its time lining up), and it's never switched away before its first shot. Steadier targeting laser on the guard dogs. The Laser Sentry never leaves a burning enemy near you hidden, only counts an enemy as burning once it has actually hit it, and falls back to its own heat estimate if the game's heat meter stops reading. Sentries also check their line of fire to a target that has dropped out of their list, the dog keeps protecting you through a moment when your position can't be read, and it stops firing at a dead target sooner. A Tesla Tower can no longer go idle for the rest of a mission. Lighter on your PC: the log file is written far less often (each write caused a tiny hitch), and the safety checks do less work.
+
 ## 4.6.6
 
 The Laser Sentry no longer flicks between targets or ignores enemies close by: it gives each enemy about half a second of beam before moving on, keeps firing at burning enemies within 15 m of you or itself, never sits idle while enemies are in reach, and stays on Chargers, Bile Titans and other heavy armor until they're dead. A safety stop is never given up on, even when a sentry or the dog keeps its target. Enemies hidden from a sentry stay hidden while the game moves its records, and the dog no longer briefly shows them again when a read fails. Faster start-up after a game patch. The log notes any target a sentry keeps firing at that the mod doesn't recognize.
