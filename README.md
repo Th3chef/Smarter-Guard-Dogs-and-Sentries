@@ -17,7 +17,7 @@ Smarter Guard Dogs & Sentries makes the shooting guard dog backpacks and your se
 - **No wasted aiming:** it stops firing the moment its target ducks behind cover, doesn't pick enemies it can't see, and quickly gives up on an enemy it keeps lining up without getting a shot.
 - **Skips armor it can't hurt (Armor Intelligence):** the Guard Dog leaves Hulks, Chargers, Tanks, emplacements, bunker turrets and other Heavy armor alone, and only fires short suppressing bursts at Heavy Devastators. The Guard Dog and Rover also leave the guns on Factory Striders and Vox Engines alone. The Rover also leaves Scout Striders alone but still burns Devastators' legs. The K-9 skips nothing.
 - **Range:** the Guard Dog ignores enemies beyond its reach (about 32 m), and the Rover sticks to enemies within 35 m while any are around. It's a guard dog: the enemies near you come first.
-- **The Rover spreads its fire,** lighting the closest unlit enemies first.
+- **The Rover spreads its fire,** lighting the closest unlit enemies first, with about half a second of beam on each.
 
 ## Sentry features
 
@@ -67,7 +67,7 @@ Get the latest zip from the [Releases](../../releases/latest) page (the `Smarter
 
 1. Install Bingus Shared Loader v15 or newer.
 2. Remove any older version of Smarter Guard Dogs (& Sentries).
-3. Add Smarter-Guard-Dogs-and-Sentries-4.6.6.zip in Arsenal or the HD2 Mod Manager and check the options you want (updating: make sure the new Sentry Safety option is checked).
+3. Add Smarter-Guard-Dogs-and-Sentries-4.6.7.zip in Arsenal or the HD2 Mod Manager and check the options you want (updating: make sure the new Sentry Safety option is checked).
 4. Purge, then Deploy (always both, every time you install or update), then restart the game.
 
 ## Uninstall
