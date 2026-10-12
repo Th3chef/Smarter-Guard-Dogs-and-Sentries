@@ -6,7 +6,13 @@
 -- helpers stop counting toward Lua's 200 locals of the main chunk once the file ends
 local SAFE, dot3, segment_distance, M, TEAM, P, PRIORITY, union, plan, BLANK, hidden, hider_restore, hider_apply, restore, apply, steer
 do
-local FAST = { fire = 0.15, lock = 0.5, recent = 8, recent_seconds = 3.0, near = 20, reach = 35 }
+local FAST = { fire = 0.5, lock = 0.5, recent = 8, recent_seconds = 3.0, near = 20, reach = 35 }
+-- (4.6.7 Test 2, the author: the Rover hesitated) fire 0.15 -> 0.5 s, as the Laser Sentry's: each switch costs it a
+-- fresh line-up (about half a second), so after only 0.15 s of beam it spent about half its time lining up (sim: firing
+-- 48% -> 67% of the time in a fight, 36% -> 57% surrounded). 'lock' is now checked against P.fire_step, its time in
+-- its firing step whether or not in step with its aim (P.lock, which still counts its line-up too, is for the no-shot
+-- rule): counted from the start of the line-up, a line-up over 0.5 s was cut short before the first shot and it never
+-- fired. 'switch_after_lock' now means it fired 0.5 s without being in step with its aim
 -- The Rover spreads its fire: once an enemy is alight it moves on to one within 'reach' meters that it hasn't
 -- set alight in the last 'recent_seconds' (it remembers its last 'recent' targets). Only when there is no such
 -- enemy (the last one nearby, or every other one already burning) does it keep firing at the one it is on.
@@ -162,9 +168,7 @@ local function unsafe_enemies(st)
   local me, dog = st.player_pos, st.dog
   if not (me and st.drone_pos) then return U, 0 end
   local spots = dog_positions(st)
-  st.dog_spots = #spots
   local bodies = bodies_of(st)
-  st.mates_near = #bodies - ((bodies[1] and not bodies[1].mate) and 1 or 0)
   local radius = dog.radius or 0.4
   local D0 = st.drone_pos
   for _, c in ipairs(st.candidates) do
@@ -324,6 +328,51 @@ local function note_change(st, old, held)
     st.dog.name, old, st.target, held or 0, what, st.node, (st.deadline - st.now) / 1e6))
 end
 
+-- the enemies the Rover hit in the last few seconds (their burn is still ticking)
+local function recent_set(t)
+  local set = {}
+  for _, r in ipairs(P.recent) do if t - r.t < FAST.recent_seconds then set[r.id] = true end end
+  return set
+end
+-- ((4.6.7 review) out of plan(): a closure made every frame kept LuaJIT from compiling plan()
+local function dog_kick(st, t, hide, block, reason)
+  -- a repeat for the same target means the dog ignored the last redirect
+  -- (a nudge after a kill, with no target set, doesn't count: there is nothing to have ignored)
+  -- ((4.6.6 review) the same ask again: another reason starts the count over, and a safety stop never backs off - it
+  -- is asked again every HOLD_SECONDS while the target is unsafe, as a back-off left the dog free to fire through you)
+  if st.target ~= 0 and P.kicked == st.target and P.kick_reason == reason then P.ignored = P.ignored + 1 else P.kicked, P.ignored, P.kick_reason = st.target, 0, reason end
+  if P.ignored >= 2 and not reason:find('^safety') then
+    -- it keeps ignoring us: keep the enemies hidden but stop forcing re-selection for a while
+    P.kicked, P.ignored = nil, 0
+    if reason == 'cannot_hurt' then
+      -- some enemies (seen with armored striders) stay the dog's target however often we hide them; pulling
+      -- it off again and again only makes it start over each time, so stop redirecting it off that one (it
+      -- stays hidden, so the dog still drops it whenever the game lets it)
+      P.stuck[st.target] = true
+      local c
+      for _, x in ipairs(st.candidates) do if x.id == st.target then c = x end end
+      local k = c and c.kind and hexr(c.kind) or '?'
+      stuck_logged = stuck_logged or {}
+      if not stuck_logged[k] then
+        stuck_logged[k] = true
+        local a = c and c.kind and ARMOR[c.kind]
+        event(string.format('cannot steer: the %s keeps returning to %s (type %s); left to the game', st.dog.name, a and a.name or '?', k))
+      end
+      return { block = hide, kick = false, reason = reason }
+    end
+    P.hold = { target = st.target, block = block, until_t = t + BACKOFF_SECONDS, reason = reason }
+    stats.ignored_redirects = stats.ignored_redirects + 1
+    bump(session.actions, 'backing_off')
+    if stats.ignored_redirects <= 20 then event(string.format('backing off: %s ignored two redirects (target %d)', st.dog.name, st.target)) end   -- ((4.6.7 review) capped)
+    return { block = union(block, hide), kick = false, reason = reason }
+  end
+  P.hold = { target = st.target, block = block, until_t = t + HOLD_SECONDS, reason = reason }
+  P.last_kick_t = t
+  if reason == 'out_of_sight' then P.cover_t, P.cover_enemy, P.cover_step = t, st.target, st.node end
+  if reason:find('^safety') then P.safety_t, P.safety_enemy, P.safety_step, P.safety_now = t, st.target, st.node, (st.unsafe_why[st.target] or ''):find('after the turn') == nil end
+  return { block = union(block, hide), kick = true, reason = reason }
+end
+
 -- returns { block = set of enemy ids to hide from the dog, kick = force a re-selection now, reason = text }
 function plan(st)
   local t = os.clock()
@@ -341,10 +390,24 @@ function plan(st)
         end
       end
     end
-    P.target, P.fire, P.lock, P.target_since = st.target, 0, 0, t
+    -- (Tester: how long each line-up takes to the first shot, and how many end before one)
+    if TESTER then
+      local d = session.dog_time[st.dog.name]
+      if d and P.lu_t and P.target ~= 0 then d.lu_cut = (d.lu_cut or 0) + 1 end
+      P.lu_t = st.target ~= 0 and t or nil
+    end
+    P.target, P.fire, P.lock, P.target_since, P.fire_step = st.target, 0, 0, t, 0
   end
   local attacking = st.target ~= 0 and (st.node == 6 or st.node == 7)
+  -- ((4.6.7 review) an ask it obeyed is not counted as ignored when it later comes back to that enemy)
+  if P.kicked and st.target ~= 0 and st.target ~= P.kicked then P.kicked, P.ignored = nil, 0 end
   if attacking then P.lock = P.lock + dt end
+  if attacking and st.node == 7 then P.fire_step = (P.fire_step or 0) + dt end
+  if TESTER and P.lu_t and st.node == 7 then
+    local d = session.dog_time[st.dog.name]
+    if d then local lu = t - P.lu_t; d.lu_n, d.lu_sum = (d.lu_n or 0) + 1, (d.lu_sum or 0) + lu; if lu > (d.lu_max or 0) then d.lu_max = lu end end
+    P.lu_t = nil
+  end
   if st.node == 7 and st.synced then P.fire = P.fire + dt; P.last_fire_t = t end
   -- (4.6.3 review) measured from when it last had no target: before, time spent idle counted too, so the first enemy
   -- it picked after a quiet spell was committed to at once and a closer threat couldn't pull it during its line-up
@@ -498,68 +561,26 @@ function plan(st)
     for _, c in ipairs(st.candidates) do if c.id ~= st.target and (c.eligible or c.mask == '    ') then focus[c.id] = true end end
   end
   local hide = union(U, F, N, C, R, S, focus)
-  st.hide_sets = { unsafe = U, closer_threat = F, armor = N, cover = C, range = R, no_shot = S, focus = focus }
+  if TESTER then st.hide_sets = { unsafe = U, closer_threat = F, armor = N, cover = C, range = R, no_shot = S, focus = focus } end   -- ((4.6.7 review) the F8 marker's only)
   -- a re-selection we asked for is still pending: keep the same enemies hidden until the target changes
   -- (4.6.4 review: not while its target has become unsafe - a hold for another reason must never delay a safety stop)
+  -- ((4.6.7 review) nor while its target is dead: a back-off hold on it kept the 'target lost' ask off for up to 1 s)
   if P.hold and st.target == P.hold.target and t < P.hold.until_t
-     and not (U[st.target] and not tostring(P.hold.reason):find('^safety')) then
+     and not (U[st.target] and not tostring(P.hold.reason):find('^safety'))
+     and not (st.target ~= 0 and not (tgt_c and tgt_c.alive)) then
     return { block = union(P.hold.block, hide), kick = false, reason = P.hold.reason }
   end
   P.hold = nil
 
   local current
   for _, c in ipairs(st.candidates) do if c.id == st.target then current = c end end
-  -- the enemies the Rover hit in the last few seconds (their burn is still ticking)
-  local function recent_set()
-    local set = {}
-    for _, r in ipairs(P.recent) do if t - r.t < FAST.recent_seconds then set[r.id] = true end end
-    return set
-  end
-  local function kick(block, reason)
-    -- a repeat for the same target means the dog ignored the last redirect
-    -- (a nudge after a kill, with no target set, doesn't count: there is nothing to have ignored)
-    -- ((4.6.6 review) the same ask again: another reason starts the count over, and a safety stop never backs off - it
-    -- is asked again every HOLD_SECONDS while the target is unsafe, as a back-off left the dog free to fire through you)
-    if st.target ~= 0 and P.kicked == st.target and P.kick_reason == reason then P.ignored = P.ignored + 1 else P.kicked, P.ignored, P.kick_reason = st.target, 0, reason end
-    if P.ignored >= 2 and not reason:find('^safety') then
-      -- it keeps ignoring us: keep the enemies hidden but stop forcing re-selection for a while
-      P.kicked, P.ignored = nil, 0
-      if reason == 'cannot_hurt' then
-        -- some enemies (seen with armored striders) stay the dog's target however often we hide them; pulling
-        -- it off again and again only makes it start over each time, so stop redirecting it off that one (it
-        -- stays hidden, so the dog still drops it whenever the game lets it)
-        P.stuck[st.target] = true
-        local c
-        for _, x in ipairs(st.candidates) do if x.id == st.target then c = x end end
-        local k = c and c.kind and hexr(c.kind) or '?'
-        stuck_logged = stuck_logged or {}
-        if not stuck_logged[k] then
-          stuck_logged[k] = true
-          local a = c and c.kind and ARMOR[c.kind]
-          event(string.format('cannot steer: the %s keeps returning to %s (type %s); left to the game', st.dog.name, a and a.name or '?', k))
-        end
-        return { block = hide, kick = false, reason = reason }
-      end
-      P.hold = { target = st.target, block = block, until_t = t + BACKOFF_SECONDS, reason = reason }
-      if reason:find('^safety') then P.safety_t, P.safety_enemy, P.safety_step, P.safety_now = t, st.target, st.node, (st.unsafe_why[st.target] or ''):find('after the turn') == nil end
-      stats.ignored_redirects = stats.ignored_redirects + 1
-      bump(session.actions, 'backing_off')
-      event(string.format('backing off: %s ignored two redirects (target %d)', st.dog.name, st.target))
-      return { block = union(block, hide), kick = false, reason = reason }
-    end
-    P.hold = { target = st.target, block = block, until_t = t + HOLD_SECONDS, reason = reason }
-    P.last_kick_t = t
-    if reason == 'out_of_sight' then P.cover_t, P.cover_enemy, P.cover_step = t, st.target, st.node end
-    if reason:find('^safety') then P.safety_t, P.safety_enemy, P.safety_step, P.safety_now = t, st.target, st.node, (st.unsafe_why[st.target] or ''):find('after the turn') == nil end
-    return { block = union(block, hide), kick = true, reason = reason }
-  end
 
   -- 1) the dog's current target is on the other side of you: move it to a safe enemy, or make it stand down
   -- (only the target itself and the unsafe enemies are hidden; the dog picks freely among the rest)
   if st.target ~= 0 and U_now[st.target] and attacking then
     local other = pick_other(st, union(U, N, C, R, S), t, current)
-    if other then return kick({ [st.target] = true }, 'safety_switch') end
-    return kick({ [st.target] = true }, 'safety_hold')
+    if other then return dog_kick(st, t, hide, { [st.target] = true }, 'safety_switch') end
+    return dog_kick(st, t, hide, { [st.target] = true }, 'safety_hold')
   end
   -- 2) its target just died (or dropped out of sight): make it choose again now instead of shooting the
   --    body until its one-second selection timer runs out. Once per lost target, at most every 0.1 s.
@@ -570,7 +591,7 @@ function plan(st)
   if st.target ~= 0 and not (current and current.alive) and P.lost_target ~= st.target and t - (P.lost_t or 0) >= 0.1 then
     P.lost_target, P.lost_t, P.lost_tries = st.target, t, 0
     note_lost(st, 'target no longer valid')
-    return kick({}, 'target_lost')
+    return dog_kick(st, t, hide, {}, 'target_lost')
   end
   if st.target == 0 and prev ~= 0 then P.lost_from, P.lost_tries = prev, 0 end
   -- (4.5.1) only when it has something it may pick: asked with nothing to choose, the game gives it a fresh timer in
@@ -584,7 +605,7 @@ function plan(st)
     if any then
       P.lost_t, P.lost_tries = t, (P.lost_tries or 0) + 1
       if P.lost_tries == 1 then note_lost(st, 'target cleared, timer still running') end
-      return kick({}, 'target_lost')
+      return dog_kick(st, t, hide, {}, 'target_lost')
     end
   end
   if st.target ~= 0 then P.lost_from = nil end
@@ -593,7 +614,7 @@ function plan(st)
   if next(U) then P.safety_seen = t end
   if st.target == 0 and t - (P.safety_seen or -99) < 2.0 and t - (P.last_kick_t or -99) >= 0.1 then
     for _, c in ipairs(st.candidates) do
-      if (c.eligible or (c.mask == '    ' and c.alive and (c.score or 0) > 0)) and not hide[c.id] then return kick({}, 'resume') end
+      if (c.eligible or (c.mask == '    ' and c.alive and (c.score or 0) > 0)) and not hide[c.id] then return dog_kick(st, t, hide, {}, 'resume') end
     end
   end
   -- 2c) engage (3.0): no target, yet an enemy it could shoot is in sight and in range: make it choose now instead
@@ -610,7 +631,7 @@ function plan(st)
           and (not reach or (c.d2 and c.d2 <= reach)) then
           P.engage_tries = (P.engage_tries or 0) + 1
           if P.engage_tries > ENGAGE.tries then P.engage_tries, P.engage_pause = 0, t + ENGAGE.pause; break end
-          return kick({}, 'engage')
+          return dog_kick(st, t, hide, {}, 'engage')
         end
       end
     end
@@ -618,12 +639,12 @@ function plan(st)
   -- 3) it is shooting at something it cannot hurt, or at cover (it keeps firing at an enemy's last known
   --    spot for about a second after losing sight of it): make it choose again among what it can hit
   if st.target ~= 0 and attacking and ((N[st.target] and not P.stuck[st.target]) or (C[st.target] and (not calm or st.node == 7))) then
-    return kick({ [st.target] = true }, N[st.target] and 'cannot_hurt' or 'out_of_sight')
+    return dog_kick(st, t, hide, { [st.target] = true }, N[st.target] and 'cannot_hurt' or 'out_of_sight')
   end
   -- (only redirected when there is something in range to go to: with nothing in range the far one just stays
   -- hidden, rather than asking the dog to choose again and again for nothing)
-  if st.target ~= 0 and attacking and R[st.target] and not calm and in_range_alt then return kick({ [st.target] = true }, 'out_of_range') end
-  if st.target ~= 0 and attacking and S[st.target] then return kick({ [st.target] = true }, 'no_shot') end
+  if st.target ~= 0 and attacking and R[st.target] and not calm and in_range_alt then return dog_kick(st, t, hide, { [st.target] = true }, 'out_of_range') end
+  if st.target ~= 0 and attacking and S[st.target] then return dog_kick(st, t, hide, { [st.target] = true }, 'no_shot') end
   if current and st.node == 7 and P.fire >= BURST.fire and burst_only(st.dog, current) then
     -- (the whole Devastator rests: its body and its shield are separate entries, rest_parts in engine_armor.lua)
     local parts = rest_parts(P.rest, st.candidates, current, t + BURST.rest)
@@ -638,30 +659,30 @@ function plan(st)
       event(string.format('burst done: %s on %d %s; rested with it: %d; within 3 m: %s', st.dog.name, current.id,
         current.kind and hexr(current.kind) or '-', parts, #near > 0 and table.concat(near, ', ') or 'nothing'))
     end
-    return kick({ [st.target] = true }, 'burst_done')
+    return dog_kick(st, t, hide, { [st.target] = true }, 'burst_done')
   end
   -- 4) it is busy with an enemy well behind a closer one: switch to the closer threat
   if st.target ~= 0 and F[st.target] and not calm and not committed then
     local closer = false
     for _, c in ipairs(st.candidates) do if c.eligible and not hide[c.id] then closer = true; break end end
-    if closer then P.need_fire, P.need_fire_from = t, st.target; return kick({ [st.target] = true }, 'closer_threat') end
+    if closer then P.need_fire, P.need_fire_from = t, st.target; return dog_kick(st, t, hide, { [st.target] = true }, 'closer_threat') end
   end
   -- 5) fast switching (Rover): move on once the burn has been applied
-  if st.dog.fast and attacking and (P.fire >= FAST.fire or P.lock >= FAST.lock) then
+  if st.dog.fast and attacking and (P.fire >= FAST.fire or (P.fire_step or 0) >= FAST.lock) then
     local other = pick_other(st, union(U, N, C, R, S), t, current)
     if other and not (other.d2 and other.d2 <= FAST.reach ^ 2 and not recently(other.id, t)) then other = nil end
     if other then
       remember(st.target, t)
       -- hide the one it just burned and the other recently burned ones, as long as something is left to pick
-      local block = recent_set()
+      local block = recent_set(t)
       local left = false
-      for _, c in ipairs(st.candidates) do if c.eligible and not block[c.id] and not hide[c.id] then left = true end end
+      for _, c in ipairs(st.candidates) do if c.eligible and not block[c.id] and not hide[c.id] then left = true; break end end
       if not left then block = {} end
       block[st.target] = true
       -- (a line-up cut short by this switch counts half towards the no-shot rule: the mod moved it on, the enemy
       -- wasn't necessarily out of reach)
       if P.fire < FAST.fire and P.lineup[st.target] then P.lineup[st.target].acc = math.max(0, P.lineup[st.target].acc - 0.5 * P.lock) end
-      return kick(block, P.fire >= FAST.fire and 'switch_after_burn' or 'switch_after_lock')
+      return dog_kick(st, t, hide, block, P.fire >= FAST.fire and 'switch_after_burn' or 'switch_after_lock')
     end
   end
   -- 6) otherwise just keep unsafe (and, near a close threat, far-away) enemies hidden
@@ -772,6 +793,7 @@ function apply(st, block)
 end
 
 local noted = {}
+local safety_noted = { target = nil, t = -99 }   -- ((4.6.7 review) the last safety stop noted, see below)
 local function note_action(st, req)
   local unsafe = 0
   for _ in pairs(req.block) do unsafe = unsafe + 1 end
@@ -814,6 +836,11 @@ local function note_action(st, req)
     return
   end
   if not req.reason:find('^safety') then return end   -- target switches are too frequent to list one by one
+  -- ((4.6.7 review) one stop is asked again every 0.25 s for as long as it lasts (4.6.6: a safety stop never backs
+  -- off): noted and counted once, not on every ask - the repeats filled the log and rewrote it every 3 s)
+  local now_t = os.clock()
+  if safety_noted.target == st.target and now_t - safety_noted.t < 3 then safety_noted.t = now_t; return end
+  safety_noted.target, safety_noted.t = st.target, now_t
   if (st.unsafe_why and st.unsafe_why[st.target] or ''):find('teammate') then session.team.stops = session.team.stops + 1 end
   local c
   for _, x in ipairs(st.candidates) do if x.id == st.target then c = x end end

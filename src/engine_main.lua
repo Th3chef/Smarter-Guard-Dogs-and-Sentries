@@ -2,6 +2,7 @@
 -- Main loop
 -- ======================================================================================================
 local next_poll, next_log, last_log, broken = 0, 0, 0, false
+local LOG_EVERY = { idle = 60, changed = 15 }   -- (4.6.7) seconds between log rewrites: at most / after a change
 local read_fail_since           -- (4.6.6 review) when the dog's reads started failing (nil: they work)
 local last_poll_t
 local sentry_broken, sentry_last_error = false, nil
@@ -112,7 +113,10 @@ local function tick()
   -- the log is rewritten every 10 s, and within a second of anything new being noted
   -- ((4.6.4 review) a change is written within 3 s, not every second: each rewrite is a whole file on the game thread;
   -- errors and shutdown still write at once)
-  if t >= next_log or (session.dirty and t - last_log >= 3) then next_log, last_log = t + 10, t; pcall(write_log) end   -- ((4.6.6 review) in a pcall: a log error stopped the whole mod)
+  -- ((4.6.7, a player reported a performance cost) each rewrite took ~3.3 ms on the game thread in a Test 3 log (every
+  -- one over 1 ms - the mod's only frame spikes; everything else ~0.15 ms a frame): now every 60 s, and a change within
+  -- 15 s (was every 10 s and within 3 s). Errors and shutdown still write at once)
+  if t >= next_log or (session.dirty and t - last_log >= LOG_EVERY.changed) then next_log, last_log = t + LOG_EVERY.idle, t; pcall(write_log) end   -- ((4.6.6 review) in a pcall: a log error stopped the whole mod)
   -- (test builds: F8 also works while no dog is out, e.g. right after you died; checked every frame so a quick
   -- press isn't missed between the slower polls)
   if TESTER and SGD.status ~= 'active' then pcall(check_marker, nil) end
@@ -248,8 +252,28 @@ do
     local q, f = ffi.new('int64_t[1]'), ffi.new('int64_t[1]')
     assert(K32.SgdQueryPerformanceFrequency(f) ~= 0 and f[0] > 0)
     local per_ms = tonumber(f[0]) / 1000
-    local T = { n = 0, sum = 0, max = 0, over = 0 }
+    local T = { n = 0, sum = 0, max = 0, over = 0, parts = {} }
     session.timing = T
+    -- (4.6.7 Test 1, a player reported a high performance cost) the main parts timed too - the log rewrite, reading
+    -- the dog's state, the sentries and the laser - so a test log shows which one makes the slow frames
+    local q2 = ffi.new('int64_t[1]')
+    local function finish(Pt, a, ...)
+      K32.SgdQueryPerformanceCounter(q2)
+      local ms = tonumber(q2[0] - a) / per_ms
+      Pt.n, Pt.sum = Pt.n + 1, Pt.sum + ms
+      if ms > Pt.max then Pt.max = ms end
+      if ms > 1 then Pt.over = Pt.over + 1 end
+      return ...
+    end
+    local function part(name, fn)
+      local Pt = { name = name, n = 0, sum = 0, max = 0, over = 0 }
+      T.parts[#T.parts + 1] = Pt
+      return function(...) K32.SgdQueryPerformanceCounter(q2); return finish(Pt, q2[0], fn(...)) end
+    end
+    write_log = part('writing the log', write_log)
+    read_state = part('reading the dog and enemies', read_state)
+    sentry_tick = part('sentries', sentry_tick)
+    laser.step = part('laser', laser.step)
     SGD.time_tick = function()
       K32.SgdQueryPerformanceCounter(q); local a = q[0]
       local ok2, e = pcall(tick)
