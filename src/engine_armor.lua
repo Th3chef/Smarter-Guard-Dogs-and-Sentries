@@ -237,10 +237,277 @@ local PEN = { ['Rover'] = 2, ['Guard Dog'] = 3, ['K-9'] = 7 }
 -- (sentries carry their own 'pen' in SENTRIES: machine gun and Gatling 3, Laser 4 (Heavy); those without one - the
 -- anti-tank weapons and mortars - shoot everything)
 
+-- ======================================================================================================
+-- (5.0 Test 12) Part armor. the author: "see if the sentries and guard dogs can read what part they are aiming at and
+-- determine what Armor rating it is, before firing on it, instead of blacklisting a whole enemy", and "add a fallback
+-- so if it cant determine what part an enemy is, it goes off of the old version and blacklists an enemy based on what
+-- armor rating it is".
+-- For an enemy with a part model, the line from the gun to where it aims is followed into the enemy: the first part
+-- it meets decides, by that part's armor (Codex). A Hulk facing away shows its Heatsink (AV1); a Charger facing away
+-- its Butt (AV0). Anything that can't be worked out - no model for that enemy, its bones can't be read or don't
+-- match a known skeleton, the line meets none of the parts - falls back to the whole enemy's main armor (as before).
+-- A model: boxes in one bone's own axes (the frame bone; the game's pose matrices: rows = the bone's axes in the
+-- world, then its place), from the game's own models (Filediver glb, bind pose: tools/parts_gen.py). Each box has an
+-- armor value, and a face can have its own (the Hulk's back face is its heatsink). The skeleton is checked before
+-- use: child bones whose origins sit at fixed places in the frame bone's axes (they rotate, they don't move) must be
+-- where the model says, to within 10 cm; this also catches a variant whose bones are numbered differently.
+-- ======================================================================================================
+local PARTS
+do
+  -- box: { x0, x1, y0, y1, z0, z1, armor, part name, faces = { ['y-'] = { armor, name }, ... } } (meters)
+  local HULK = { name = 'Hulk', back = { 0, -1, 0 }, aim = { 0, 0, 0 },
+    -- frame bone spine2 (+x up, -y back, z sideways); its aim_root sits on it (the game aims at the chest)
+    boxes = {
+      { -0.25, 1.45, -1.10, 0.85, -0.75, 0.75, 4, 'Main', faces = { ['y-'] = { 1, 'Heatsink' } } },   -- upper body: the back is the heatsink
+      { -1.05, -0.25, -0.90, 0.75, -0.72, 0.72, 4, 'Main' },                                            -- lower body
+      { 0.16, 1.05, -0.60, 0.16, 0.39, 1.66, 4, 'Shoulder' },
+      { 0.16, 1.05, -0.60, 0.16, -1.66, -0.39, 4, 'Shoulder' },
+    },
+    checks = { { 0.691, 0.532, 0 }, { 0.9, -0.9, 0 } } }   -- head, backpack_damage
+  local CHARGER = { name = 'Charger', back = { -1, 0, 0 }, aim = { 0, 0, 0 },
+    -- frame bone boss (+x forward, z up); the abdomen runs back to x -3.5
+    boxes = {
+      { -1.50, 0.85, -1.37, 1.37, -0.60, 1.70, 4, 'Torso Armor', faces = { ['z-'] = { 2, 'Underside' } } },
+      { 0.75, 2.60, -0.90, 0.90, -1.00, 1.00, 4, 'Head' },                    -- (the Behemoth's bigger head)
+      -- ((5.0 Test 16, Test 14 log on bugs: the answer from 15-30 deg behind flipped between Butt and the plates every few
+      -- tenths of a second) the plates' box no longer reaches past the butt's at the back or sides, and starts a little
+      -- higher: from behind, a sentry's line meets the butt; only a line coming down on it meets the plates
+      { -3.30, -1.10, -0.80, 0.80, 0.95, 1.85, 4, 'Rear Armor Plates' },     -- the plates over the abdomen
+      { -3.30, -1.10, -0.80, 0.80, -0.45, 0.95, 0, 'Butt' },                 -- the abdomen under them
+    },
+    checks = { { 0.669, 0, 0.228 }, { -1.087, 0, 0.238 } } }   -- neck1, spine1
+  -- skeletons: the frame bone and the check bones by node number (asset index bone_names; node k = bone k)
+  local HULK_S = { { 79, 120, 135 }, { 79, 120, 138 } }                  -- cha_lieutenant, cha_lieutenant_assault
+  local CHARGER_S = { { 61, 62, 79 }, { 72, 73, 90 }, { 62, 63, 80 } }   -- cha_charger(_bull), _acid, _burrower
+  local KNOWN = {   -- units the asset index names: their own skeleton first
+    ['846bc06c6b213a06'] = HULK_S[1], ['b16493b009eec762'] = HULK_S[2],
+    ['1a7fcdff98c664b0'] = CHARGER_S[1], ['3aff5fd7d5450b99'] = CHARGER_S[1], ['6b202392f4ab605e'] = CHARGER_S[2], ['0ab7b92b131c228c'] = CHARGER_S[3],
+  }
+  PARTS = { kinds = {}, units = {}, frames = {}, verdict = {}, lines = 0, bad = {} }
+  -- every listed Hulk and Charger (sub-faction and tier variants too: their skeleton is found by the checks); not the
+  -- Hulks' arms, flag and jetpack, which are units of their own
+  for k, a in pairs(ARMOR) do
+    local n = a.name
+    local model = (n:find('^Hulk') and not n:find('arm%)') and not n:find('flag') and not n:find('jetpack') and HULK)
+      or (n:find('Charger') and CHARGER) or nil
+    if model then
+      local list = {}
+      local own = KNOWN[hexr(k)]
+      if own then list[1] = own end
+      for _, s in ipairs(model == HULK and HULK_S or CHARGER_S) do if s ~= own then list[#list + 1] = s end end
+      PARTS.kinds[k] = { model = model, skel = list }
+    end
+  end
+  local function now() return os.clock() end
+  -- a bone's world place (or, with whole = true, its axes too) from the unit's pose array
+  local function bone(pose, i, whole)
+    local m = read(pose + 64 * i, 64)
+    if not m then return nil end
+    local x, y, z = f32(m, 48), f32(m, 52), f32(m, 56)
+    if not (x == x and y == y and z == z and math.abs(x) < 1e6 and math.abs(y) < 1e6 and math.abs(z) < 1e6) then return nil end
+    if not whole then return { x, y, z } end
+    local rows = {}
+    for r = 0, 2 do
+      local a, b, c = f32(m, r * 16), f32(m, r * 16 + 4), f32(m, r * 16 + 8)
+      local len = math.sqrt(a * a + b * b + c * c)
+      if not (len > 0.5 and len < 2) then return nil end
+      rows[r + 1] = { a / len, b / len, c / len }
+    end
+    return { x, y, z, rows = rows }
+  end
+  local function loc(F, p)
+    local dx, dy, dz = p[1] - F[1], p[2] - F[2], p[3] - F[3]
+    local R = F.rows
+    return dx * R[1][1] + dy * R[1][2] + dz * R[1][3], dx * R[2][1] + dy * R[2][2] + dz * R[2][3], dx * R[3][1] + dy * R[3][2] + dz * R[3][3]
+  end
+  -- which skeleton this unit has (checked once per unit): the first whose check bones sit where the model says
+  local function skeleton(unit, kind, pose)
+    local u = PARTS.units[unit]
+    if u and u.kind == kind and not (u.retry and now() >= u.retry) then return u.skel end
+    local K = PARTS.kinds[kind]
+    local found, unread = false, false
+    for _, s in ipairs(K.skel) do
+      local F = bone(pose, s[1], true)
+      if not F then unread = true end
+      if F then
+        local ok = true
+        for ci = 1, 2 do
+          local q = bone(pose, s[ci + 1])
+          local e = K.model.checks[ci]
+          if not q then ok = false; unread = true; break end
+          local x, y, z = loc(F, q)
+          if (x - e[1]) ^ 2 + (y - e[2]) ^ 2 + (z - e[3]) ^ 2 > 0.01 then ok = false; break end
+        end
+        if ok then found = s; break end
+      end
+    end
+    -- ((5.0 release review) a bone that couldn't be read (a unit just spawned, its pose not filled in yet) is not an
+    -- answer: main armor for now, and the skeleton is looked at again in a second)
+    if not found and unread then
+      PARTS.units[unit] = { kind = kind, skel = false, retry = now() + 1 }
+      return false
+    end
+    PARTS.units[unit] = { kind = kind, skel = found }
+    if not found and not PARTS.bad[kind] then
+      PARTS.bad[kind] = true
+      note('part armor: ' .. K.model.name .. ' type ' .. hexr(kind) .. ' - its bones match no known skeleton, so it is judged by its main armor')
+    end
+    return found
+  end
+  -- the frame bone of an enemy this frame (read at most every 30 ms per unit)
+  local function frame(c)
+    local unit = c.ent and u32(c.ent, 12)
+    if not unit or unit == 0 then return nil end
+    local t = now()
+    local F = PARTS.frames[unit]
+    if F and F.kind == c.kind and t - F.t < 0.03 then return F.F end
+    local root = unit_position(unit)
+    if not (root and root.pose) then return nil end
+    local s = skeleton(unit, c.kind, root.pose)
+    local B = s and bone(root.pose, s[1], true) or nil
+    PARTS.frames[unit] = { kind = c.kind, t = t, F = B }
+    return B
+  end
+  -- slab test of the segment a -> b (local coordinates) against a box: where it enters, and through which face
+  -- ((5.0 release review) the face names made once, not a table and a string per axis per box per call)
+  local FACE = { { 'x-', 'x+' }, { 'y-', 'y+' }, { 'z-', 'z+' } }
+  local function enter(a, d, b)
+    local t0, t1, face = 0, 1, nil
+    for ax = 1, 3 do
+      local lo, hi = b[ax * 2 - 1], b[ax * 2]
+      if math.abs(d[ax]) < 1e-9 then
+        if a[ax] < lo or a[ax] > hi then return nil end
+      else
+        local ta, tb = (lo - a[ax]) / d[ax], (hi - a[ax]) / d[ax]
+        local side = 1
+        if ta > tb then ta, tb, side = tb, ta, 2 end
+        if ta > t0 then t0, face = ta, FACE[ax][side] end
+        if tb < t1 then t1 = tb end
+        if t0 > t1 then return nil end
+      end
+    end
+    if not face then return nil end   -- (it starts inside the box)
+    return t0, face
+  end
+  -- the first part the segment from SA toward (px, py, pz) meets: its armor and name ((5.0 release review) one function
+  -- and two reused tables instead of a closure and two tables per call)
+  local SA, SD = { 0, 0, 0 }, { 0, 0, 0 }
+  local function try_meet(M, px, py, pz)
+    -- (the segment runs 1.5 times past the aim point: a shot doesn't stop where it was aimed)
+    SD[1], SD[2], SD[3] = (px - SA[1]) * 1.5, (py - SA[2]) * 1.5, (pz - SA[3]) * 1.5
+    local best, bf, bb
+    for _, b in ipairs(M.boxes) do
+      local tt, face = enter(SA, SD, b)
+      if tt and (not best or tt < best) then best, bf, bb = tt, face, b end
+    end
+    if not best then return nil end
+    local f = bb.faces and bb.faces[bf]
+    if f then return f[1], f[2] end
+    return bb[7], bb[8]
+  end
+  -- the part the line from 'from' toward 'aim' meets first: armor, part name, angle from behind (degrees); nil if
+  -- it can't be worked out
+  PARTS.meet = function(c, from, aim)
+    local K = PARTS.kinds[c.kind]
+    local F = frame(c)
+    if not F then return nil end
+    local M = K.model
+    local ax, ay, az = loc(F, from)
+    SA[1], SA[2], SA[3] = ax, ay, az
+    local av, part
+    if aim then local x, y, z = loc(F, aim); av, part = try_meet(M, x, y, z) end
+    if not av then av, part = try_meet(M, M.aim[1], M.aim[2], M.aim[3]) end
+    if not av then return nil end
+    -- angle between the gun's direction and straight behind (for the log)
+    local bk, h = M.back, math.sqrt(ax * ax + ay * ay + az * az)
+    local ang = h > 0.01 and math.deg(math.acos(math.max(-1, math.min(1, (ax * bk[1] + ay * bk[2] + az * bk[3]) / h)))) or 0
+    return av, part, ang
+  end
+  -- a short hold: a gun that could hurt an enemy keeps that answer for PARTS.HOLD (0.6 s) after its line last met a part it can hurt,
+  -- so an enemy turning back and forth on the edge doesn't flip it every frame
+  -- ((5.0 Test 21, the author: sentries "dont seem to consistently aim at the rear of chargers" - Test 20 log: guns 8-15 m up,
+  -- coming down on a Charger's back, the answer flipped Butt <-> Rear Armor Plates 123 times) 0.6 s, was 0.25 s
+  PARTS.HOLD = 0.6
+  PARTS.decide = function(dog, c, from, who, aim, pen, main_av)
+    -- ((5.0 release review) the same gun asks about the same enemy several times a frame (its target pick, the no-shot
+    -- list, the marker, the priority rules): the first answer this frame is kept, one for a look along its aim and one
+    -- without. Answers are kept per gun, then per enemy - no key string made per call)
+    local W = PARTS.verdict[who or dog.name]
+    if not W then W = {}; PARTS.verdict[who or dog.name] = W end
+    local V = W[c.id]
+    if not V then V = {}; W[c.id] = V end
+    if aim then
+      if V.fa == FRAME then return V.ra end
+    elseif V.fn == FRAME then return V.rn end
+    local av, part, ang = PARTS.meet(c, from, aim)
+    -- ((5.0 Test 16, test builds) where the game really aims a sentry at a Hulk or Charger, in the enemy's frame (frame
+    -- bone axes: Hulk +x up / -y back; Charger +x forward / +z up): at most every 2 s per enemy kind, 16 lines
+    if TESTER and aim and (PARTS.aims or 0) < 16 then
+      local K = PARTS.kinds[c.kind]
+      local tk = (PARTS.aim_t or {})[K.model.name]
+      local tn = now()
+      if not tk or tn - tk > 2 then
+        local F = frame(c)
+        if F then
+          PARTS.aim_t = PARTS.aim_t or {}; PARTS.aim_t[K.model.name] = tn
+          PARTS.aims = (PARTS.aims or 0) + 1
+          local x, y, z = loc(F, aim)
+          local gx, gy, gz = loc(F, from)
+          event(string.format('part aim (test): %s on %s %d: the game aims at %.2f %.2f %.2f in its frame, the gun at %.1f %.1f %.1f; the line meets %s',
+            dog.name, K.model.name, c.id, x, y, z, gx, gy, gz, part and (part .. ' AV' .. av) or 'nothing'))
+        end
+      end
+    end
+    local t = now()
+    local can
+    if av then can = av <= pen else can = main_av <= pen end
+    if can then
+      V.last_can = t
+    elseif V.last_can and t - V.last_can < PARTS.HOLD then
+      can = true
+    end
+    -- a change of answer is counted (and in test builds written out, at most 40); not the first look that says
+    -- skip - that is what every gun says of every Hulk and Charger facing it
+    local first = V.can == nil
+    if V.can ~= can and not (first and not can) then
+      V.can = can
+      local say = (av and (part .. ' AV' .. av) or ('main armor AV' .. main_av .. ' (part not found)')) .. (can and ': fires' or ': skips')
+      local name = (ARMOR[c.kind] and ARMOR[c.kind].name) or '?'
+      bump(session.parts, string.format('%s on %s: %s', dog.name, name, say))
+      if TESTER and PARTS.lines < 40 then
+        PARTS.lines = PARTS.lines + 1
+        local gl = ''
+        if aim then
+          local F = frame(c)
+          if F then local x, y, z = loc(F, aim); gl = string.format(', the game aims at %.2f %.2f %.2f in its frame', x, y, z) end
+        end
+        event(string.format('part check: %s on %s %d: %s%s%s', who and tostring(who) ~= dog.name and (dog.name .. ' ' .. tostring(who)) or dog.name,
+          name, c.id, say, ang and string.format(' (%.0f deg from straight behind)', ang) or '', gl))
+      end
+    end
+    if first then V.can = can end
+    -- (old answers are dropped now and then: the table must not grow all session)
+    PARTS.n = (PARTS.n or 0) + 1
+    if PARTS.n > 20000 then
+      PARTS.n = 0
+      for g, W2 in pairs(PARTS.verdict) do
+        for k2, V2 in pairs(W2) do if not V2.last_can or t - V2.last_can > 30 then W2[k2] = nil end end
+        if next(W2) == nil then PARTS.verdict[g] = nil end
+      end
+      PARTS.units, PARTS.frames = {}, {}
+    end
+    if aim then V.fa, V.ra = FRAME, not can else V.fn, V.rn = FRAME, not can end
+    return not can
+  end
+end
+
 -- switched on by the optional 'Armor skipping' part of the mod (a tiny second addon that sets this flag); read
 -- every frame, so load order does not matter
+-- ((5.0 Test 12) from = the gun's muzzle (or the dog), who = which gun (a sentry's id; a dog's name), aim = where the
+-- game is aiming it now, if this enemy is its target: with them, an enemy with a part model is judged by the part the
+-- line of fire meets; without them, or when that can't be worked out, by its main armor as before)
 local armor_state
-local function cannot_hurt(dog, c)
+local function cannot_hurt(dog, c, from, who, aim)
   local on = rawget(_G, 'SmarterGuardDogsArmor') == true
   if on ~= armor_state then armor_state = on; note('armor intelligence: ' .. (on and 'on' or 'off (option not installed)')) end
   if not on or not c.kind then return false end
@@ -250,8 +517,16 @@ local function cannot_hurt(dog, c)
   if a.sentries_skip and dog.sentry then return true end         -- dropships: no sentry shoots them
   local pen = dog.pen or PEN[dog.name] or 99
   if a.legs and a.legs <= pen then return false end
-  return a.av > pen
+  if a.av <= pen then return false end
+  if from and PARTS.kinds[c.kind] then
+    local ok, r = pcall(PARTS.decide, dog, c, from, who, aim, pen, a.av)
+    if ok then return r end
+    if not PARTS.failed then PARTS.failed = true; note('part armor stopped (error): ' .. tostring(r)) end
+    PARTS.kinds = {}   -- (back to main armor for every enemy)
+  end
+  return true
 end
+laser.cannot_hurt = cannot_hurt   -- ((5.0 Test 10) for the dogs' markers (engine_laser.lua comes first)
 local function burst_only(dog, c)
   local a = c.kind and rawget(_G, 'SmarterGuardDogsArmor') == true and ARMOR[c.kind]
   return a and a.burst and dog.name == 'Guard Dog'

@@ -1,33 +1,61 @@
 
 -- ======================================================================================================
--- Targeting laser (drawn only on your screen): green from the dog to the enemy it is on, flashing red to
--- the enemy it is being kept off because you are in the way. Uses the engine's own line drawing; if that is not
+-- Targeting laser (drawn only on your screen). (5.0, the author's colors) red from the gun to the enemy it is firing at,
+-- amber while it is locked on but not firing yet (lining up, turning), flashing green to the enemy it is being kept
+-- off because a friendly (you, a teammate, a sentry, a SEAF soldier or civilian) is in the way, gray when it lost
+-- sight of its target. Uses the engine's own line drawing; if that is not
 -- available in this game build, the laser simply stays off and the log says why.
 -- ======================================================================================================
 -- the laser is switched on by the optional 'Targeting laser' part of the mod (a tiny second addon that sets
 -- this flag); it is read every frame, so load order does not matter
-local function laser_wanted() return rawget(_G, 'SmarterGuardDogsLaser') == true end
+-- ((5.0 Test 13) the drawing runs for the Targeting Laser or the Targeting Marker option: the two are separate options, see
+-- laser.step in engine_main.lua for what each keeps)
+local function laser_wanted() return rawget(_G, 'SmarterGuardDogsLaser') == true or rawget(_G, 'SmarterGuardDogsMarker') == true end
 local RED_SECONDS = 0.6         -- how long the red warning stays up after the safety steps in
 -- (4.0: colors about 25% dimmer than before, a tester's call; the sentries' rings are a little brighter, see
 -- engine_sentry.lua)
-local GREEN = { 150, 23, 113, 30 }   -- alpha, red, green, blue: laser-pointer green
-local RED = { 170, 128, 19, 19 }
-local YELLOW = { 170, 173, 150, 15 }   -- a shot stopped because the target went out of sight (cover or smoke)
+-- (5.0) the beam's meaning (each table is the key the drawing looks its look up by; alpha, red, green, blue)
+local FIRE = { 255, 220, 16, 12 }     -- firing at an enemy: red
+local FRIEND = { 255, 0, 200, 20 }    -- held off an enemy because a friendly is in the way: green (flashing)
+local LOST = { 255, 150, 150, 150 }   -- a shot stopped because the target went out of sight (cover or smoke): gray
+local LOCK = { 255, 230, 140, 0 }     -- locked on, not firing yet (lining up, turning onto it): amber
 local LASER_RISE = 0.0               -- meters above the drone's center where the beam starts
 local LASER_FORWARD = 0.45           -- meters out from the drone's center toward its target (its front face)
 local AIM_RISE = 0.5                 -- meters above an enemy's base when not following a barrel (low: most bugs are small);
                                      -- a dog can set its own (the Guard Dog's shots land ~1.2-1.4 m up, measured in game)
 local ATTACK_STEPS = { [6] = true, [7] = true }   -- the dog's AI steps for lining up a shot and firing
-local FIRE_STEP = 7                               -- the step where it is actually shooting
+local FIRE_STEP = 7                               -- the step where it is actually shooting (6: lining it up)
 local FLASH_HZ = 6
 
 local laser = { state = 'not started', worlds = {},
   -- (4.6.7 Test 1, the author: the Rover's laser shook while it aimed) seconds: how quickly a dog's beam end catches up
   -- with where it should point (as BEAM_SMOOTH does for the sentries since 5.0 Test 14; the dogs had none)
   dog_smooth = 0.1, dog_beam = {} }
+-- ((5.0 Test 9, the author: the markers "need to move more in real time like actual pings"; the laser "sometimes floating
+-- in front of the enemies") an enemy's place as the game draws it this frame - its unit's root - instead of the copy in
+-- the gun's perception record, which the AI refreshes only ~6 times a second (the Test 8 probe: a gunship's place held
+-- still every other sample). The perception copy when the unit can't be read
+laser.live = function(c)
+  local e = c and c.ent
+  if e then
+    local p = unit_position(u32(e, 12))
+    if p then return p end
+  end
+  return c and c.pos
+end
+-- ((5.0 Test 9) how far into the enemy a beam fixed on a barrel runs past the point nearest its centre: the line is
+-- depth-tested, so its visible end is where it meets the enemy's body)
+laser.INTO = 0.4
 -- (4.5.3) Laser Brightness (the option's sub-options, or Bingus' Mod Options Menu): a multiplier on every beam's and ring's
 -- color - the lines' red, green and blue (the engine ignores their transparency), the glow's transparency. 1 = as
 -- before; read every frame
+-- (5.0 Test 15, the author: "add targeting marker opacity as well, in case people want to tune how it appears") the Marker
+-- Opacity option (its sub-options, or the Mod Options Menu): a multiplier on the markers' transparency. 1 = as designed
+laser.marker_opacity = function()
+  local o = rawget(_G, 'SmarterGuardDogsMarkerOpacity')
+  if type(o) ~= 'number' or o ~= o then return 1 end
+  return math.max(0.1, math.min(1, o))
+end
 laser.brightness = function()
   local b = rawget(_G, 'SmarterGuardDogsLaserBrightness')
   if type(b) ~= 'number' or b ~= b then return 1 end
@@ -44,21 +72,94 @@ local SR = rawget(_G, 'stingray')
 -- green is a neon laser-pointer green, (0,200,20). A beam on a target ends in a small cross just in front of the
 -- enemy. The line object is depth-tested: walls and terrain hide the beam like a real one.
 do
+  -- (5.0 Test 5, the author: Test 4's thick beam "looks super cartoony") a laser's look: one hot core line inside four
+  -- strands 3 mm out in the beam's own color (no darker edge: the engine draws lines solid, so a dim edge only made a
+  -- dark outline), ending in a small bright cross on the enemy. Only firing and safety holds have a beam; locked on
+  -- (about to fire) and target lost are a marker over the enemy instead, like the game's ping. Every beam and marker
+  -- fades with its distance from you (FADE: full up to 'near' m, down to 'low' at 'far' m and beyond)
+  -- (5.0 Test 6, the author: "less intense", like a real laser - a thin line with a soft glow and a bright point where
+  -- it leaves the gun) the strands are dimmer than the core, the core is only lightly whitened, and a small star
+  -- marks the emitter. The marker is the gun's own stratagem icon ("I won't know what sentry/dog it is"), facing you
+  -- and kept about the same size on screen at any distance, over a small chevron pointing at the enemy
   local BEAM = {
-    side = 0.004,     -- the side strands: meters from the core
-    dot = 0.03,       -- the cross on the target: its half-size in meters
-    dot_back = 0.3,   -- the cross sits this far in front of the aim point (meters, toward the beam's start)
+    inner = 0.003, strands = 0,   -- ((5.0 Test 8) no strands: lines 3 mm apart broke the beam into dashes on screen)
+    dot = 0.035, dot_back = 0.08,   -- the cross on the target: its half-size, and how far in front of the end
+    flare = 0.045, flare_v = 0.028,  -- the star at the emitter: its half-width and half-height (meters)
+    mark_up = 1.0,                   -- the chevron's point, over the enemy's aim point (meters)
+    icon_per_m = 0.05, icon_min = 0.5, icon_max = 3.5,   -- ((5.0 Test 8) about 40 px at 1080p, was 30)   -- the icon's height: this much per meter from you, within these
   }
+  local FADE = { near = 25, far = 70, low = 0.45, steps = 4 }
+  laser.fade_of = function(from)
+    local me = laser.me
+    if not me then return 1 end
+    local d = math.sqrt((from[1] - me[1]) ^ 2 + (from[2] - me[2]) ^ 2 + (from[3] - me[3]) ^ 2)
+    if d <= FADE.near then return 1 end
+    local f = math.max(FADE.low, 1 - (1 - FADE.low) * (d - FADE.near) / (FADE.far - FADE.near))
+    return math.floor(f * FADE.steps + 0.5) / FADE.steps   -- (a few levels only: each is a color made once)
+  end
   -- colors (alpha, red, green, blue; the engine ignores the alpha) by the beam's base color: core, side strands,
   -- the cross on the target
   -- (4.5: green is (0,200,20) throughout, a tester's pick, shown as neon green in game; red and yellow keep
   -- the color-chart shades a tester picked in 4.0.1: core post 9, sides post 8, cross post 10)
-  local NEON = { 255, 0, 200, 20 }
+  -- core, inner strands, outer (soft edge) strands, the ring and dot on the target
+  local function shade(c, k) return { c[1], math.floor(c[2] * k + 0.5), math.floor(c[3] * k + 0.5), math.floor(c[4] * k + 0.5) } end
+  -- (the core whitened a little: a laser's hottest line; the strands dimmer, the glow round it. Test 6: less whitening
+  -- (35% before) and dimmer strands (the pure color before) - "the lasers should be less intense". 'body': the icon's
+  -- sentry or backpack, half as bright as its weapon glyph, the HUD icon's two tones)
+  local function look(c, k)
+    local a = shade(c, k)
+    local w = { a[1], math.floor(a[2] + (255 - a[2]) * 0.12), math.floor(a[3] + (255 - a[3]) * 0.12), math.floor(a[4] + (255 - a[4]) * 0.12) }
+    return { core = w, side = shade(c, k * 0.72), dot = w, body = shade(c, k * 0.5) }
+  end
   local STYLE = {
-    [GREEN] = { core = NEON, side = NEON, dot = NEON },
-    [RED] = { core = { 255, 140, 90, 90 }, side = { 255, 100, 60, 60 }, dot = { 255, 180, 120, 120 } },
-    [YELLOW] = { core = { 255, 140, 135, 90 }, side = { 255, 100, 95, 60 }, dot = { 255, 180, 175, 120 } },
+    [FIRE] = look(FIRE, 0.9), [FRIEND] = look(FRIEND, 0.9),
+    [LOST] = look(LOST, 0.8), [LOCK] = look(LOCK, 1),
   }
+  -- the icons (icon_data.lua), unpacked once: per icon its glyph and body as flat lists of (height, left, right),
+  -- the height 0..1 from the bottom and the sides -0.5..0.5 across
+  local ICONS = {}
+  do
+    local val = {}
+    for k = 1, #ICON_DATA.abc do val[ICON_DATA.abc:sub(k, k)] = k - 1 end
+    local R, C = ICON_DATA.rows, ICON_DATA.cols
+    local function unpack_runs(str)
+      local out = {}
+      for k = 1, #str - 2, 3 do
+        out[#out + 1] = (val[str:sub(k, k)] + 0.5) / R
+        out[#out + 1] = val[str:sub(k + 1, k + 1)] / C - 0.5
+        out[#out + 1] = val[str:sub(k + 2, k + 2)] / C - 0.5
+      end
+      return out
+    end
+    for name, d in pairs(ICON_DATA) do
+      if type(d) == 'table' then
+        local ic = { g = unpack_runs(d.g), b = unpack_runs(d.b), rows = R }
+        -- ((5.0 Test 8) per band, its leftmost to rightmost run: the dark edge behind the GUI marker, one quad a band)
+        local span, sh = {}, {}
+        for _, L in ipairs({ ic.g, ic.b }) do
+          for k = 1, #L, 3 do
+            local h = L[k]
+            local sp = span[h]
+            if not sp then span[h] = { L[k + 1], L[k + 2] } else sp[1], sp[2] = math.min(sp[1], L[k + 1]), math.max(sp[2], L[k + 2]) end
+          end
+        end
+        for h, sp in pairs(span) do sh[#sh + 1] = h; sh[#sh + 1] = sp[1]; sh[#sh + 1] = sp[2] end
+        ic.sh = sh
+        ICONS[name] = ic
+      end
+    end
+  end
+  -- which icon each gun shows (by its name in DEFS/DOGS); the pod gun runs the Gatling's AI and has no icon of its own
+  local ICON_OF = {
+    ['Machine Gun Sentry'] = 'mg', ['Gatling Sentry'] = 'gatling', ['Autocannon Sentry'] = 'ac', ['Rocket Sentry'] = 'rocket',
+    ['Laser Sentry'] = 'laser', ['Flame Sentry'] = 'flame', ['Tesla Tower'] = 'tesla', ['Mortar Sentry'] = 'mortar',
+    ['EMS Mortar Sentry'] = 'ems', ['Resupply Pod Gun'] = 'gatling', ['Supply FRV Gun'] = 'frv',
+    ['Guard Dog'] = 'dog', ['Rover'] = 'rover', ['K-9'] = 'k9',
+  }
+  -- the strands' directions round the beam, and the ring's, worked out once
+  local SC, SS = {}, {}
+  for k = 1, BEAM.strands do local a = 2 * math.pi * (k - 0.5) / BEAM.strands; SC[k], SS[k] = math.cos(a), math.sin(a) end
+
   local sqrt = math.sqrt
   -- two unit vectors at right angles to the unit vector d and to each other (the first one level)
   local function perp(dx, dy, dz)
@@ -69,30 +170,96 @@ do
     return ux, uy, 0, -dz * uy, dz * ux, dx * uy - dy * ux
   end
   laser.styled = function(b) return STYLE[b.argb] ~= nil end
-  -- adds one styled beam: line(color, x1, y1, z1, x2, y2, z2) draws one line. 3 lines (the core and two side strands),
-  -- plus 2 for the cross; the core goes last, on top
+  -- the marker over an enemy: line(color, fade, ...) as for the beams. The gun's icon stands upright facing you (its
+  -- lines run across your view, so the bands read as a filled shape), about 30 pixels tall at any distance; a small
+  -- chevron under it points at the enemy
+  -- where a marker goes: its icon, the chevron's point (x, y, z), your right (rx, ry), its size and the chevron's
+  -- half-width. ((5.0 Test 8) several guns on one enemy: their icons side by side - b.slot of b.slots, set by
+  -- laser.prepare)
+  -- ((5.0 Test 15, the author: "the marker only appears vertically up and down, it should display to you the same whether
+  -- you are flat on the ground or looking down from the top of a skyscraper") the marker faces your eyes, tilted as
+  -- well as turned: its right stays level, its 'up' (ux, uy, uz) leans back as you look down on it. Your eyes: 1.7 m
+  -- over your helldiver (the camera is close to that). Straight down on it, the last right is kept
+  local EYE_UP = 1.7
+  laser.mark_right = { 1, 0 }
+  laser.marker_geom = function(b)
+    local t = b.to
+    local me = laser.me
+    local x, y, z = t[1], t[2], t[3] + BEAM.mark_up
+    local rx, ry, dist = laser.mark_right[1], laser.mark_right[2], 20
+    local ux, uy, uz = 0, 0, 1
+    if me then
+      local fx, fy, fz = x - me[1], y - me[2], z - (me[3] + EYE_UP)
+      dist = sqrt(fx * fx + fy * fy + fz * fz)
+      local l = sqrt(fx * fx + fy * fy)
+      if l > 0.05 * dist and l > 0.05 then rx, ry = fy / l, -fx / l; laser.mark_right[1], laser.mark_right[2] = rx, ry end   -- (your right, looking at it)
+      if dist > 0.1 then
+        fx, fy, fz = fx / dist, fy / dist, fz / dist
+        -- up = right x forward (right is level: its z is 0)
+        ux, uy, uz = ry * fz, -rx * fz, rx * fy - ry * fx
+        local ul = sqrt(ux * ux + uy * uy + uz * uz)
+        if ul > 1e-3 then ux, uy, uz = ux / ul, uy / ul, uz / ul else ux, uy, uz = 0, 0, 1 end
+      end
+    end
+    local sz = math.min(BEAM.icon_max, math.max(BEAM.icon_min, dist * BEAM.icon_per_m))
+    local n = b.slots or 1
+    if n > 1 then
+      local o = ((b.slot or 1) - (n + 1) / 2) * sz * 1.1
+      x, y = x + rx * o, y + ry * o
+    end
+    local ic = ICONS[ICON_OF[b.icon or ''] or ''] or ICONS.mg   -- (b.icon: the gun's name)
+    return ic, x, y, z, rx, ry, sz, sz * 0.12, ux, uy, uz
+  end
+  -- the marker as lines (when the game build has no world GUI): line(color, fade, ...) as for the beams. The gun's icon
+  -- stands upright facing you, about 30 pixels tall at any distance; a small chevron under it points at the enemy
+  local function marker(b, S, line)
+    local fd = b.fade or 1
+    local ic, x, y, z, rx, ry, sz, cw, ux, uy, uz = laser.marker_geom(b)
+    -- (a point a along your right and h along the marker's up, from the chevron's tip)
+    line(S.core, fd, x - rx * cw + ux * cw, y - ry * cw + uy * cw, z + uz * cw, x, y, z)
+    line(S.core, fd, x + rx * cw + ux * cw, y + ry * cw + uy * cw, z + uz * cw, x, y, z)
+    local base = cw + sz * 0.1
+    for pass = 1, 2 do
+      local L, col = pass == 1 and ic.b or ic.g, pass == 1 and S.body or S.core
+      for k = 1, #L, 3 do
+        local h, a, c = base + L[k] * sz, L[k + 1] * sz, L[k + 2] * sz
+        line(col, fd, x + rx * a + ux * h, y + ry * a + uy * h, z + uz * h, x + rx * c + ux * h, y + ry * c + uy * h, z + uz * h)
+      end
+    end
+  end
+  -- adds one styled beam (or marker) as lines: line(color, fade, x1, y1, z1, x2, y2, z2) draws one line in a color dimmed
+  -- by 'fade'. A beam: its strands, a small cross on the target, the star at the gun, and the core last, on top
   laser.draw_styled = function(b, line)
     local S = STYLE[b.argb]
+    if b.marker then return marker(b, S, line) end
     local f, t = b.from, b.to
     local dx, dy, dz = t[1] - f[1], t[2] - f[2], t[3] - f[3]
     local len = sqrt(dx * dx + dy * dy + dz * dz)
     if len < 0.05 then return end
     dx, dy, dz = dx / len, dy / len, dz / len
     local ux, uy, uz, vx, vy, vz = perp(dx, dy, dz)
-    -- the two strands: one level to the side (u), one above (v), so the beam has width seen from the side or from above
-    local w = BEAM.side
-    local ax, ay, az, bx, by, bz = ux * w, uy * w, uz * w, vx * w, vy * w, vz * w
-    line(S.side, f[1] + ax, f[2] + ay, f[3] + az, t[1] + ax, t[2] + ay, t[3] + az)
-    line(S.side, f[1] + bx, f[2] + by, f[3] + bz, t[1] + bx, t[2] + by, t[3] + bz)
+    local fd = b.fade or 1
+    local w = BEAM.inner
+    for k = 1, BEAM.strands do
+      local cu, cv = SC[k] * w, SS[k] * w
+      local ox, oy, oz = ux * cu + vx * cv, uy * cu + vy * cv, uz * cu + vz * cv
+      line(S.side, fd, f[1] + ox, f[2] + oy, f[3] + oz, t[1] + ox, t[2] + oy, t[3] + oz)
+    end
     if b.dot then
-      -- a small cross at right angles to the beam
+      -- a small bright cross where it hits, just in front of the end
       local back = math.min(BEAM.dot_back, len * 0.5)
       local qx, qy, qz = t[1] - dx * back, t[2] - dy * back, t[3] - dz * back
-      local r = BEAM.dot
-      line(S.dot, qx - ux * r, qy - uy * r, qz - uz * r, qx + ux * r, qy + uy * r, qz + uz * r)
-      line(S.dot, qx - vx * r, qy - vy * r, qz - vz * r, qx + vx * r, qy + vy * r, qz + vz * r)
+      local d = BEAM.dot
+      line(S.dot, fd, qx - ux * d, qy - uy * d, qz - uz * d, qx + ux * d, qy + uy * d, qz + uz * d)
+      line(S.dot, fd, qx - vx * d, qy - vy * d, qz - vz * d, qx + vx * d, qy + vy * d, qz + vz * d)
     end
-    line(S.core, f[1], f[2], f[3], t[1], t[2], t[3])
+    if not b.no_flare then
+      -- ((5.0 Test 6) the star where it leaves the gun: a short level line and a shorter upright one, across the beam)
+      local h, g = BEAM.flare, BEAM.flare_v
+      line(S.core, fd, f[1] - ux * h, f[2] - uy * h, f[3] - uz * h, f[1] + ux * h, f[2] + uy * h, f[3] + uz * h)
+      line(S.core, fd, f[1] - vx * g, f[2] - vy * g, f[3] - vz * g, f[1] + vx * g, f[2] + vy * g, f[3] + vz * g)
+    end
+    line(S.core, fd, f[1], f[2], f[3], t[1], t[2], t[3])
   end
 
 end
@@ -172,6 +339,124 @@ end
 -- new this frame (the mod is checking only a few times a second, idle sentries): both line objects are drawn again as
 -- they are. An empty list clears everything
 -- ((4.6.4 review) the drawing in a named function, called through pcall: a new closure every frame before)
+-- (5.0, the author: "smoother motion") before a frame's beams are drawn: each styled beam gets its fade with distance from you,
+-- and a beam that has a 'key' (whose it is: the dog, a sentry) and changed target ('tg') swings its end over to the
+-- new target over SWITCH seconds (eased) instead of jumping there
+local SWITCH = 0.14
+local MARK_HOLD = 0.4
+laser.ends = {}
+laser.mark_last = {}
+local function SLOT_ORDER(a, c) return a.sk < c.sk end
+laser.prepare = function(beams)
+  local t = os.clock()
+  local E_ = laser.ends
+  -- ((5.0 Test 8, the author: the marker is "not showing consistently") a locked-on marker missing for a frame or two
+  -- (the gun's records between two states) stays up to MARK_HOLD s where it was, so it doesn't blink)
+  local MH = laser.mark_last
+  -- ((5.0 release review) the held entries are reused, not made anew each frame: m.f = the frame stamp it was last seen)
+  laser.mark_frame = (laser.mark_frame or 0) + 1
+  local fr = laser.mark_frame
+  for _, b in ipairs(beams) do
+    if b.marker and b.key then
+      local m = MH[b.key]
+      if m then m.b, m.t, m.f = b, t, fr else MH[b.key] = { b = b, t = t, f = fr } end
+    end
+  end
+  for k, m in pairs(MH) do
+    if m.f ~= fr then
+      if t - m.t < MARK_HOLD then beams[#beams + 1] = m.b else MH[k] = nil end
+    end
+  end
+  -- ((5.0 Test 8) markers on the same enemy (or the same spot) side by side)
+  local groups
+  for _, b in ipairs(beams) do
+    if b.marker then
+      local k = b.tg or string.format('%.0f/%.0f/%.0f', b.to[1] * 2, b.to[2] * 2, b.to[3] * 2)
+      groups = groups or {}
+      local g = groups[k]
+      if not g then g = {}; groups[k] = g end
+      g[#g + 1] = b
+    end
+  end
+  -- ((5.0 Test 17, test builds; the author: with 3 or more guns on one enemy "it doesnt display more than 2, or at least the dog
+  -- marker didnt show") how many markers stand on one enemy, and how often the dog's is up while it has a target
+  if TESTER then
+    local MS = laser.mstat or { n = 0, dog_t = 0, dog_m = 0, most = 0, three = 0, logged = 0 }
+    laser.mstat = MS
+    MS.n = MS.n + 1
+    local top = 0
+    for _, g in pairs(groups or {}) do if #g > top then top = #g end end
+    if top > MS.most then MS.most = top end
+    if top >= 3 then MS.three = MS.three + 1 end
+    if laser.dog_target then MS.dog_t = MS.dog_t + 1; if MH.mdog and MH.mdog.f == fr then MS.dog_m = MS.dog_m + 1 end end
+    if MS.n >= (rawget(_G, 'SGD_SIM_EVERY') or 1800) and MS.logged < 8 then   -- (the simulator logs sooner)
+      MS.logged = MS.logged + 1
+      event(string.format('markers (test): over %d frames the dog\'s marker was up on %d of its %d frames with a target; most markers on one enemy %d (3 or more on %d frames)',
+        MS.n, MS.dog_m, MS.dog_t, MS.most, MS.three))
+      MS.n, MS.dog_t, MS.dog_m, MS.most, MS.three = 0, 0, 0, 0, 0
+    end
+  end
+  if groups then
+    for _, g in pairs(groups) do
+      if #g > 1 then
+        for _, b in ipairs(g) do b.sk = tostring(b.icon) .. tostring(b.key) end   -- (the sort key made once, not per comparison)
+        table.sort(g, SLOT_ORDER)
+        for i, b in ipairs(g) do b.slot, b.slots = i, #g end
+      else
+        g[1].slot, g[1].slots = nil, nil   -- ((5.0 release review) a held marker left alone goes back over its enemy)
+      end
+    end
+  end
+  for _, b in ipairs(beams) do
+    if laser.styled(b) then
+      b.fade = laser.fade_of(b.from)
+      local key = b.key
+      if key then
+        local E = E_[key]
+        if E and t - E.t < 0.3 then
+          -- ((5.0 Test 7) not a beam fixed on its gun's barrel: the barrel turning moves it, as a real one)
+          if E.tg ~= b.tg and not b.fixed then E.sw_from, E.sw_t = E.to, t end
+          if b.fixed then E.sw_t = nil end
+          if E.sw_t then
+            local x = (t - E.sw_t) / SWITCH
+            if x >= 1 then E.sw_t = nil
+            else
+              local k = x * x * (3 - 2 * x)
+              local a, e = E.sw_from, b.to
+              b.to = { a[1] + (e[1] - a[1]) * k, a[2] + (e[2] - a[2]) * k, a[3] + (e[3] - a[3]) * k }
+            end
+          end
+        else
+          E = {}
+          E_[key] = E
+        end
+        -- (Testers: how far each beam's end moves a frame while it stays on the same target - the dog's and the
+        -- sentries' apart; one line each per 300 frames, up to 6 a session)
+        if TESTER and E.to and E.tg == b.tg and not E.sw_t then
+          local who = key == 'dog' and 'dog' or 'sentries'
+          laser.st5 = laser.st5 or {}
+          local S = laser.st5[who] or { n = 0, d = 0, logged = 0 }
+          laser.st5[who] = S
+          local o, e = E.to, b.to
+          local d = math.sqrt((e[1] - o[1]) ^ 2 + (e[2] - o[2]) ^ 2 + (e[3] - o[3]) ^ 2)
+          if d < 3 then S.n, S.d = S.n + 1, S.d + d end
+          if S.n >= 300 and S.logged < 6 then
+            S.logged = S.logged + 1
+            event(string.format('laser steadiness (test): the %s beam end moved %.1f cm a frame on the same target (%d frames)', who, 100 * S.d / S.n, S.n))
+            S.n, S.d = 0, 0
+          end
+        end
+        E.to, E.tg, E.t = b.to, b.tg, t
+      end
+    end
+  end
+  -- (ends not drawn for a while are forgotten)
+  if (laser.ends_clean or 0) < t then
+    laser.ends_clean = t + 5
+    for k, E in pairs(E_) do if t - E.t > 5 then E_[k] = nil end end
+  end
+end
+
 local function laser_draw_body(beams, redraw)
     local worlds, why = live_worlds()
     if not worlds then
@@ -179,6 +464,7 @@ local function laser_draw_body(beams, redraw)
       return
     end
     local rings = beams.rings
+    if not redraw then laser.prepare(beams) end
     local LO, V = SR.LineObject, SR.Vector3
     local keep, keep_r = {}, {}
     -- (has the set of rings changed since they were last built?)
@@ -201,15 +487,20 @@ local function laser_draw_body(beams, redraw)
       if lo then
         keep[w] = lo
         local colours = {}
-        local function colour(a)
-          local c = colours[a]
+        -- ((5.0) 'fd': the beam's fade with distance from you, a few levels; each color and level is made once a frame)
+        local function colour(a, fd)
+          fd = fd or 1
+          local byf = colours[a]
+          if not byf then byf = {}; colours[a] = byf end
+          local c = byf[fd]
           if not c then
-            if BR == 1 then c = SR.Color(a[1], a[2], a[3], a[4])
+            local B2 = BR * fd
+            if B2 == 1 then c = SR.Color(a[1], a[2], a[3], a[4])
             else
               -- (4.6.3 review) past full strength a channel can't go brighter (the neon green's 200 reached 255 at about
               -- 130%, so Bright and Brightest looked the same): what is left over whitens the color instead, as the
               -- glow does
-              local r, g, b = a[2] * BR, a[3] * BR, a[4] * BR
+              local r, g, b = a[2] * B2, a[3] * B2, a[4] * B2
               local m = math.max(r, g, b)
               if m > 255 then
                 local w = math.min(0.6, (m - 255) / m)
@@ -218,18 +509,20 @@ local function laser_draw_body(beams, redraw)
               end
               c = SR.Color(a[1], math.floor(r + 0.5), math.floor(g + 0.5), math.floor(b + 0.5))
             end
-            colours[a] = c
+            byf[fd] = c
           end
           return c
         end
         if not redraw then
           LO.reset(lo)
           -- (each color is built once per frame)
-          local function line(a, x1, y1, z1, x2, y2, z2) LO.add_line(lo, colour(a), V(x1, y1, z1), V(x2, y2, z2)) end
+          local function line(a, fd, x1, y1, z1, x2, y2, z2) LO.add_line(lo, colour(a, fd), V(x1, y1, z1), V(x2, y2, z2)) end
           -- (4.5: with the glow chosen, the dogs' and sentries' beams are left to it)
           local lines = not (laser.glow and laser.glow.on())
           for _, b in ipairs(beams) do
-            if laser.styled(b) then if lines then laser.draw_styled(b, line) end   -- the dogs' and sentries' beams: core, side strands, cross
+            -- (the dogs' and sentries' beams: core, cross. (5.0 Test 8) markers are drawn by the world GUI - filled, and seen
+            -- through walls like the game's own pings - and as lines only where the game build has none)
+            if laser.styled(b) then if (b.marker and not laser.glow.markers_ok()) or (lines and not b.marker) then laser.draw_styled(b, line) end
             else LO.add_line(lo, colour(b.argb), V(b.from[1], b.from[2], b.from[3]), V(b.to[1], b.to[2], b.to[3])) end   -- (any other line)
           end
         end
@@ -283,6 +576,7 @@ end
 -- crash the game)
 laser.forget = function()
   laser.worlds, laser.ring_lo, laser.has, laser.ring_sig = {}, {}, false, nil
+  laser.mark_last = {}
   if laser.glow then laser.glow.guis, laser.glow.ids, laser.glow.last = {}, {}, nil end
 end
 
@@ -311,9 +605,11 @@ do
   laser.glow = G
   -- alpha, red, green, blue by the beam's color: the narrow core, the wide halo, the spot on the target
   local LOOK = {
-    [GREEN] = { core = { 210, 110, 255, 130 }, halo = { 55, 60, 255, 90 }, dot = { 230, 170, 255, 170 } },
-    [RED] = { core = { 210, 255, 90, 80 }, halo = { 55, 255, 50, 40 }, dot = { 230, 255, 160, 150 } },
-    [YELLOW] = { core = { 210, 255, 230, 90 }, halo = { 55, 255, 210, 50 }, dot = { 230, 255, 240, 160 } },
+    -- ((5.0) red firing, green held for a friendly, gray lost, amber locked on)
+    [FIRE] = { core = { 210, 255, 110, 90 }, halo = { 55, 255, 40, 30 }, dot = { 230, 255, 170, 150 } },
+    [FRIEND] = { core = { 210, 110, 255, 130 }, halo = { 55, 60, 255, 90 }, dot = { 230, 170, 255, 170 } },
+    [LOST] = { core = { 160, 210, 210, 210 }, halo = { 40, 170, 170, 170 }, dot = { 180, 230, 230, 230 } },
+    [LOCK] = { core = { 180, 255, 190, 70 }, halo = { 45, 255, 150, 20 }, dot = { 200, 255, 210, 120 } },
   }
   local WIDTH = { core = 0.006, halo = 0.03 }   -- half-widths in meters
   local PIECES, FADE_TO, SPOT = 10, 0.3, 0.03   -- alpha falls to this share at the far end; the spot's half-size
@@ -348,6 +644,20 @@ do
   end
   -- true when the beams are the glow's (chosen, and it works)
   G.on = function() return rawget(_G, 'SmarterGuardDogsGlow') == true and not G.off and usable() end
+  -- ((5.0 Test 8) the markers are always the world GUI's when it works, Line or Glow)
+  G.markers_ok = function() return not G.off and usable() end
+  -- the marker's colors (alpha, red, green, blue): the weapon glyph solid, the sentry/backpack body see-through, the
+  -- chevron as the glyph. Locked on: the game's ping yellow; lost: gray
+  -- ((5.0 Test 8, the author: "marker is pretty rough") a pale yellow weapon glyph on a deeper yellow body, both over a
+  -- dark see-through edge so it reads on sky, snow or smoke)
+  -- ((5.0 Test 14, the author: the markers "sometimes get really dark and hard to see") lighter all round: the dark edge at
+  -- about half its strength (a thin shadow, not a dark plate), the body more solid, the target-lost gray near white;
+  -- and the markers are no longer dimmed by Laser Brightness (they are their own option now)
+  local MARK = {
+    [LOCK] = { glyph = { 255, 255, 248, 170 }, body = { 225, 255, 214, 60 }, edge = { 85, 0, 0, 0 } },
+    [LOST] = { glyph = { 255, 250, 250, 250 }, body = { 215, 214, 214, 214 }, edge = { 75, 0, 0, 0 } },
+  }
+  for _, M in pairs(MARK) do M.glyph.mark, M.body.mark, M.edge.mark = true, true, true end
 
   local sqrt = math.sqrt
   local function perp(dx, dy, dz)
@@ -388,8 +698,10 @@ do
     local keep = ids
     local tri_fn = Gui.triangle
     local BR = laser.brightness()
+    local OP = laser.marker_opacity()
     local function tri(p0, p1, p2, a)
       local c = colours[a]
+      if not c and a.mark then c = SR.Color(math.floor(a[1] * OP + 0.5), a[2], a[3], a[4]); colours[a] = c end   -- (a marker: its own opacity, no brightness)
       if not c then
         -- (4.5.3 Test 11) brightness on the glow: its transparency alone hardly showed (a tester: the setting didn't
         -- change it - the core is nearly solid already), so dimmer also darkens its color and brighter whitens it
@@ -415,8 +727,45 @@ do
       end
       if keep and id ~= nil then keep[#keep + 1] = id end
     end
+    -- ((5.0 Test 8) the markers: each run of the icon a filled quad, upright, facing you; no gaps between the bands)
+    local glow = G.on()
+    -- ((5.0 Test 15) facing your eyes: a along your right, h along the marker's up, from the chevron's tip) ((5.0 release
+    -- review) one function for every marker, reading the marker being drawn from these locals - not one made per marker)
+    local x, y, z, rx, ry, ux, uy, uz
+    local function P(a, h) return V(x + rx * a + ux * h, y + ry * a + uy * h, z + uz * h) end
     for _, b in ipairs(beams) do
-      local S = laser.styled(b) and LOOKS[b.argb]
+      local M = b.marker and MARK[b.argb]
+      if M then
+        local ic, sz, cw
+        ic, x, y, z, rx, ry, sz, cw, ux, uy, uz = laser.marker_geom(b)
+        local hb = sz / ic.rows * 0.5 + 0.0005   -- (half a band, a hair over so the bands meet)
+        local base = cw + sz * 0.1
+        local e = sz * 0.05                      -- (the dark edge's width)
+        for pass = 1, 3 do
+          local L = pass == 1 and ic.sh or pass == 2 and ic.b or ic.g
+          local col = pass == 1 and M.edge or pass == 2 and M.body or M.glyph
+          local ex = pass == 1 and e or 0
+          for k = 1, #L, 3 do
+            local h, a, c = base + L[k] * sz, L[k + 1] * sz - ex, L[k + 2] * sz + ex
+            local p1, p2 = P(a, h - hb - ex), P(c, h - hb - ex)
+            local p3, p4 = P(c, h + hb + ex), P(a, h + hb + ex)
+            tri(p1, p2, p3, col); tri(p1, p3, p4, col)
+          end
+        end
+        -- the chevron: two short bars meeting at the point
+        for pass = 1, 2 do
+          local tk = sz * 0.035 + (pass == 1 and e or 0)
+          local col = pass == 1 and M.edge or M.glyph
+          for side = -1, 1, 2 do
+            local q1, q2 = P(cw * side, cw + tk), P(cw * side, cw - tk)
+            local q3, q4 = P(0, -tk), P(0, tk)
+            tri(q1, q2, q3, col); tri(q1, q3, q4, col)
+          end
+        end
+      end
+    end
+    for _, b in ipairs(beams) do
+      local S = glow and not b.marker and laser.styled(b) and LOOKS[b.argb]
       local f, e = b.from, b.to
       local dx, dy, dz = e[1] - f[1], e[2] - f[2], e[3] - f[3]
       local len = S and sqrt(dx * dx + dy * dy + dz * dz) or 0
@@ -470,7 +819,12 @@ do
     end
   end
   G.draw = function(w, beams, redraw)
-    if not G.on() then if next(G.ids) then G.clear() end; return end
+    -- ((5.0 Test 8) also with the Glow off when there are markers to draw)
+    local any = G.on()
+    if not any and G.markers_ok() then
+      for _, b in ipairs(redraw and (G.last or beams) or beams) do if b.marker then any = true; break end end
+    end
+    if not any then if next(G.ids) then G.clear() end; G.last = nil; return end
     -- (a retained GUI still holds the last frame's triangles: nothing to do on a redraw)
     if redraw and G.guis[w] and not G.immediate then return end
     if redraw then beams = G.last or beams else G.last = beams end
@@ -589,8 +943,26 @@ local function gun_point(st, to, learn)
     local nodes = read_nodes(st.fire_pose or D.pose, D, fn)
     nd = nodes and nodes[fn]
     if not nd then return nil end
-    -- (4.5.3 Test 17) a dog whose muzzle part doesn't hold its barrel's direction (the Rover): muzzle to the aim point
-    if st.dog.beam_to_aim then return straight(st, to, nd.pos) end
+    -- ((5.0 Test 5) a dog with a set barrel axis (the Rover, the K-9): its muzzle part's axis, followed as it is - the beam
+    -- goes where the gun points, as a laser mounted on it would, sweeping with it)
+    local B = st.dog.barrel
+    if B then
+      local a = nd.axes and nd.axes[B[1]]
+      if not a then return straight(st, to, nd.pos) end
+      local dir = { a[1] * B[2], a[2] * B[2], a[3] * B[2] }
+      local v = { to[1] - nd.pos[1], to[2] - nd.pos[2], to[3] - nd.pos[3] }
+      local len = math.sqrt(v[1] * v[1] + v[2] * v[2] + v[3] * v[3])
+      -- ((5.0 Test 7, the author: "like a fixed laser") along the barrel however far off the enemy it points - before, a
+      -- barrel more than 60 degrees off fell back to pointing at the enemy)
+      if len < 1 then return straight(st, to, nd.pos) end
+      -- ((5.0 Test 9) as far as the point on the barrel's line nearest the enemy, and into it: the beam meets the
+      -- enemy's body instead of stopping in front of it)
+      local sp = v[1] * dir[1] + v[2] * dir[2] + v[3] * dir[3]
+      if sp > 1 then len = sp + laser.INTO end
+      local p = { nd.pos[1] + dir[1] * len, nd.pos[2] + dir[2] * len, nd.pos[3] + dir[3] * len }
+      local off = math.sqrt((p[1] - to[1]) ^ 2 + (p[2] - to[2]) ^ 2 + (p[3] - to[3]) ^ 2)
+      return p, nd.pos, off <= math.max(GUN.off, GUN.off_share * len), true
+    end
     if not g.node then
       if learn and (g.tries or 0) < GUN.tries then gun_learn(g, nodes, to) end
       if g.node ~= fn then g.node = nil; return straight(st, to, nd.pos) end
@@ -626,16 +998,18 @@ local function gun_point(st, to, learn)
       end
     end
   end
-  if s < 1 then
+  -- ((5.0 Test 7) a barrel turned well away still carries its laser; only one pointing back behind the drone doesn't)
+  if s < -0.5 * len then
     if g.fire then return straight(st, to, nd.pos) end
     return nil
   end
   -- (4.5.3, a tester's call: the laser comes out of the barrel and runs along it, as far as the enemy, wherever the
   -- barrel points; before, it fell back to pointing at the enemy when the barrel was off. Also returned: where the
   -- beam starts (the barrel part) and whether its end is on the enemy, for the cross)
+  if s > 1 then len = s + laser.INTO end   -- ((5.0 Test 9) into the enemy, as above)
   local p = { nd.pos[1] + dir[1] * len, nd.pos[2] + dir[2] * len, nd.pos[3] + dir[3] * len }
   local off = math.sqrt((p[1] - to[1]) ^ 2 + (p[2] - to[2]) ^ 2 + (p[3] - to[3]) ^ 2)
-  return p, nd.pos, off <= math.max(GUN.off, GUN.off_share * len)
+  return p, nd.pos, off <= math.max(GUN.off, GUN.off_share * len) + laser.INTO, true
 end
 
 -- what to show for this frame
@@ -650,17 +1024,19 @@ local function laser_frame(st, beams, safety_t, safety_enemy, safety_step, cover
   if me and (D[1] - me[1]) ^ 2 + (D[2] - me[2]) ^ 2 < DOCKED ^ 2 then return end
   -- (an enemy by id, looked up only when a beam is drawn)
   local function by_id(id) for _, c in ipairs(st.candidates) do if c.id == id then return c end end end
+  -- ((5.0 Test 9) its aim spot where the enemy is drawn this frame)
+  local function spot(c) local p = laser.live(c); return { p[1], p[2], p[3] + (st.dog.aim_rise or AIM_RISE) } end
   local t = os.clock()
   -- the beam leaves its barrel when that is known (from: the barrel part; on: its end is on the enemy, for the cross),
   -- otherwise the front of the drone, facing whatever it points at
-  local function beam(to, argb, from, on, at)
+  local function beam(to, argb, from, on, at, fixed)
     -- (4.6.7 Test 1) the firing beam's end is smoothed over about a tenth of a second, so the game's aim point
     -- wandering over the enemy doesn't shake it; a new target (or a gap) starts it afresh. What is smoothed is where
     -- the end sits on the enemy (at: the enemy's aim spot), so it never trails behind a running enemy. The start
     -- stays on the muzzle, so the beam never leaves the drone
     -- ((4.6.7 review) the offset kept as plain numbers - no tables a frame but the smoothed end - and skipped with no
     -- aim spot: smoothed in world space instead, the end would trail a running enemy)
-    if argb == GREEN and at then
+    if (argb == FIRE or argb == LOCK) and at and not fixed then
       local B = laser.dog_beam
       local raw = to
       local ox, oy, oz = raw[1] - at[1], raw[2] - at[2], raw[3] - at[3]
@@ -690,8 +1066,27 @@ local function laser_frame(st, beams, safety_t, safety_enemy, safety_step, cover
       B.ox, B.oy, B.oz, B.dog, B.target, B.t = ox, oy, oz, st.dog.name, st.target, t
       if TESTER then B.to, B.raw, B.from = to, raw, from end   -- (the steadiness stat's only)
     end
+    -- ((5.0 Test 7) a beam fixed on the barrel: its direction lightly smoothed (half the last frame's), as the sentries',
+    -- so the muzzle part's shake doesn't shake it; it still turns with the gun)
+    if fixed and from then
+      local dx, dy, dz = to[1] - from[1], to[2] - from[2], to[3] - from[3]
+      local len = math.sqrt(dx * dx + dy * dy + dz * dz)
+      local P = laser.dog_dir
+      if len > 0.1 then
+        dx, dy, dz = dx / len, dy / len, dz / len
+        if P and P.dog == st.dog.name and t - P.t < 0.25 then
+          local x, y, z = P[1] + dx, P[2] + dy, P[3] + dz
+          local l = math.sqrt(x * x + y * y + z * z)
+          if l > 1e-3 then dx, dy, dz = x / l, y / l, z / l end
+        end
+        laser.dog_dir = { dx, dy, dz, dog = st.dog.name, t = t }
+        to = { from[1] + dx * len, from[2] + dy * len, from[3] + dz * len }
+      end
+    end
+    -- ((5.0) the firing and locked-on beams are the dog's ('key'), on its target ('tg'): a new target swings the end over)
+    local mine = argb == FIRE or argb == LOCK
     if from then
-      beams[#beams + 1] = { from = from, to = to, argb = argb, dot = argb == GREEN and on ~= false }
+      beams[#beams + 1] = { from = from, to = to, argb = argb, dot = mine and on ~= false, key = mine and 'dog' or nil, tg = st.target, fixed = fixed }
       return
     end
     local dx, dy, dz = to[1] - D[1], to[2] - D[2], to[3] - (D[3] + LASER_RISE)
@@ -699,19 +1094,35 @@ local function laser_frame(st, beams, safety_t, safety_enemy, safety_step, cover
     if len < LASER_FORWARD + 0.5 then return end
     local k = LASER_FORWARD / len
     -- (a dot where it hits: only on the enemy it is firing at)
-    beams[#beams + 1] = { from = { D[1] + dx * k, D[2] + dy * k, D[3] + LASER_RISE + dz * k }, to = to, argb = argb, dot = argb == GREEN }
+    beams[#beams + 1] = { from = { D[1] + dx * k, D[2] + dy * k, D[3] + LASER_RISE + dz * k }, to = to, argb = argb, dot = mine, key = mine and 'dog' or nil, tg = st.target }
+  end
+  -- ((5.0 Test 5) locked on / target lost: a marker over the enemy, no beam)
+  -- ((5.0 Test 10, the author: no marker "unless it can actually harm them... if it is outside of their range" - the Guard
+  -- Dog marked bots at 35-40 m it never fired at) only on an enemy within the dog's range that it can hurt
+  local function can_mark(c)
+    local r = st.dog.range
+    if r and not (c.d2 and c.d2 <= r * r) then return false end
+    return not (laser.cannot_hurt and laser.cannot_hurt(st.dog, c, st.drone_pos, st.dog.name))
+  end
+  local function mark(to, argb, c)
+    if c and not can_mark(c) then return end
+    -- ((5.0 release review) grouped by the enemy it is over: a lost marker is over the old enemy, not the dog's new target)
+    beams[#beams + 1] = { from = to, to = to, argb = argb, marker = true, key = argb == LOCK and 'mdog' or nil, tg = c and c.id or st.target,
+      icon = st.dog and st.dog.name }
   end
   -- red only for a shot the safety actually stopped (it stepped in while the dog was lining up or firing),
   -- and not once the dog has gone on to something else such as reloading
   local warn = safety_t and t - safety_t < RED_SECONDS and ATTACK_STEPS[safety_step]
     and (ATTACK_STEPS[st.node] or st.target == 0)
   if warn then
+    -- ((5.0 Test 7, the author: "the color of the laser will change to green if a safety stops it") its laser, along the
+    -- barrel, turned green. ((5.0 Test 20, the author: "the safety laser should still flash green, not solid green") flashing)
     local e = by_id(safety_enemy)
-    local on = math.floor((t - safety_t) * FLASH_HZ * 2) % 2 == 0
-    if e and e.pos and on then
-      local to = { e.pos[1], e.pos[2], e.pos[3] + (st.dog.aim_rise or AIM_RISE) }
-      local gp, gfrom = gun_point(st, to, false)
-      beam(gp or to, RED, gp and gfrom)
+    local lit = math.floor(t * FLASH_HZ * 2) % 2 == 0   -- ((5.0 release review) an even blink: safety_t is renewed with each hold)
+    if e and e.pos and lit then
+      local to = spot(e)
+      local gp, gfrom, _, along = gun_point(st, to, false)
+      beam(gp or to, FRIEND, gp and gfrom, nil, nil, along)
     end
   elseif cover_t and t - cover_t < RED_SECONDS and ATTACK_STEPS[cover_step] and (ATTACK_STEPS[st.node] or st.target == 0)
     and st.target ~= cover_enemy then
@@ -722,24 +1133,22 @@ local function laser_frame(st, beams, safety_t, safety_enemy, safety_step, cover
     local on = math.floor((t - cover_t) * FLASH_HZ * 2) % 2 == 0
     -- (4.5.3 Test 9: these leave the barrel too)
     if e and e.pos and on and st.node ~= FIRE_STEP then
-      local to = { e.pos[1], e.pos[2], e.pos[3] + (st.dog.aim_rise or AIM_RISE) }
-      local gp, gfrom = gun_point(st, to, false)
-      beam(gp or to, YELLOW, gp and gfrom)
+      mark(spot(e), LOST, e)
     end
     if st.target ~= 0 and st.node == FIRE_STEP then
       local e2 = by_id(st.target)
       if e2 and e2.pos then
-        local to = { e2.pos[1], e2.pos[2], e2.pos[3] + (st.dog.aim_rise or AIM_RISE) }
-        local gp, gfrom, gon = gun_point(st, to, false)
-        beam(gp or to, GREEN, gp and gfrom, gon, to)
+        local to = spot(e2)
+        local gp, gfrom, gon, along = gun_point(st, to, false)
+        beam(gp or to, FIRE, gp and gfrom, gon, to, along)
       end
     end
   elseif st.target ~= 0 and st.node == FIRE_STEP then   -- green only while it is actually firing
     local e = by_id(st.target)
     if e and e.pos then
-      local to = { e.pos[1], e.pos[2], e.pos[3] + (st.dog.aim_rise or AIM_RISE) }
+      local to = spot(e)
       local far = e.d2 and e.d2 > GUN.min_range ^ 2
-      local gp, gfrom, gon = gun_point(st, to, e.visible and far)
+      local gp, gfrom, gon, along = gun_point(st, to, e.visible and far)
       laser.last_gun, laser.last_to = gp, to     -- (the research log compares the two)
       -- (4.5.3 Test 12, test builds) how far the beam points from where the game aims the gun (its targeting state's
       -- aim point): the angle between the two from the muzzle, and how far apart they pass at the aim point. Logged
@@ -765,7 +1174,17 @@ local function laser_frame(st, beams, safety_t, safety_enemy, safety_step, cover
           end
         end
       end
-      beam(gp or to, GREEN, gp and gfrom, gon, to)
+      beam(gp or to, FIRE, gp and gfrom, gon, to, along)
     end
+  end
+  -- ((5.0 Test 17, the author: "Guard dog marker seems a little inconsistent") its icon over its target the whole time it has
+  -- one - lining up, firing, held by the safety, moving to a better spot, after a target went out of sight - like the
+  -- sentries' (before, only while lining up or firing: the icon blinked out whenever the dog did anything else)
+  local Dp, Pp = st.drone_pos, st.player_pos
+  local docked = Dp and Pp and ((Dp[1] - Pp[1]) ^ 2 + (Dp[2] - Pp[2]) ^ 2) < 1.2 ^ 2   -- (on your back, reloading)
+  laser.dog_target = st.target ~= 0 and not docked   -- (the test builds' marker count)
+  if st.target ~= 0 and not docked then
+    local e = by_id(st.target)
+    if e and e.pos then mark(spot(e), LOCK, e) end
   end
 end

@@ -126,6 +126,12 @@ do
   OPT.tesla = function() return flag('SmarterGuardDogsTesla', 'tesla tower', ': left to the game') end
   -- (4.6.5) Sentry Safety: your sentries don't fire through or blast any sentry out - yours or another player's
   OPT.sentry_safety = function() return flag('SmarterGuardDogsSentrySafety', 'sentry safety', ': your sentries may fire through other sentries') end
+  -- (4.7.0) SEAF Safety: your dog and sentries don't fire through, swing across or blast SEAF soldiers and civilians
+  OPT.seaf_safety = function() return flag('SmarterGuardDogsSEAFSafety', 'SEAF safety', ': your dog and sentries may fire through SEAF soldiers and civilians') end
+  -- (5.0) Ping Targeting: your sentries go for a pinged enemy they can hurt first
+  OPT.ping = function() return flag('SmarterGuardDogsPing', 'ping targeting', ': your sentries pick their own targets, pinged or not') end
+  -- (5.0 Test 13) Targeting Marker: the gun's icon over the enemy it is on (its own option; works without the laser)
+  OPT.marker = function() return flag('SmarterGuardDogsMarker', 'targeting marker', ': no markers over enemies') end
   OPT.priority = function() return flag('SmarterGuardDogsPriority', 'target prioritization', ': the game decides the order') end
 end
 
@@ -497,7 +503,7 @@ function read_candidates(pbase, origin, registry, want_header)
       group = group, flags = flags, off = off, ent = ent, kind = ent and ent:sub(1, 8),
       -- the dog's own line of sight: set while it can see the enemy, cleared when cover blocks it; the
       -- float after it is how well it still remembers the enemy (1 = seen now, runs down to 0 over ~1 s)
-      visible = PBUF[off + 48] ~= 0, memory = bf32(off + 64),
+      visible = PBUF[off + 48] ~= 0 or (ent ~= nil and SGD.cloaks[ent:sub(1, 8)] == true), memory = bf32(off + 64),
       eligible = alive and bit.band(flags, 1) ~= 0 and bit.band(faction, filter) ~= 0 and score > 0,
     }
   end

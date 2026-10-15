@@ -24,20 +24,31 @@ SENTRIES_MODULE = 'mods/chef/smarter_guard_dogs_sentries'
 TESLA_MODULE = 'mods/chef/smarter_guard_dogs_tesla'
 PRIORITY_MODULE = 'mods/chef/smarter_guard_dogs_priority'
 SENTRY_SAFETY_MODULE = 'mods/chef/smarter_guard_dogs_sentry_safety'   # (4.6.5)
+SEAF_SAFETY_MODULE = 'mods/chef/smarter_guard_dogs_seaf_safety'   # (4.7.0)
+PING_MODULE = 'mods/chef/smarter_guard_dogs_ping'   # (5.0.0)
+MARKER_MODULE = 'mods/chef/smarter_guard_dogs_marker'   # (5.0.0 Test 13)
 GLOW_MODULE = 'mods/chef/smarter_guard_dogs_glow'
 # (4.5.3) Laser Brightness: one tiny addon per sub-option, all under the same name (only one is installed at a time)
 BRIGHT_MODULE = 'mods/chef/smarter_guard_dogs_brightness'
 BRIGHTS = [('Normal (100%)', 1.0, 'Laser Brightness 100'), ('Dim (50%)', 0.5, 'Laser Brightness 50'), ('Softer (75%)', 0.75, 'Laser Brightness 75'),
            ('Bright (150%)', 1.5, 'Laser Brightness 150'), ('Brightest (200%)', 2.0, 'Laser Brightness 200')]
+# (5.0.0 Test 15) Marker Opacity: the same way, one tiny addon per sub-option under one name
+OPAC_MODULE = 'mods/chef/smarter_guard_dogs_marker_opacity'
+OPACS = [('Full (100%)', 1.0, 'Marker Opacity 100'), ('Medium (75%)', 0.75, 'Marker Opacity 75'), ('Light (50%)', 0.5, 'Marker Opacity 50'),
+         ('Faint (25%)', 0.25, 'Marker Opacity 25')]
+def opac_source(v):
+    return ('-- HD2-Addon: %s\n'
+            '-- Smarter Guard Dogs & Sentries - Marker Opacity (optional part): the targeting markers at %d%% opacity.\n'
+            "rawset(_G, 'SmarterGuardDogsMarkerOpacity', %s)\n" % (OPAC_MODULE, round(v * 100), repr(v))).encode('utf-8')
 def bright_source(v):
     return ('-- HD2-Addon: %s\n'
             '-- Smarter Guard Dogs & Sentries - Laser Brightness (optional part): the targeting laser at %d%%.\n'
             "rawset(_G, 'SmarterGuardDogsLaserBrightness', %s)\n" % (BRIGHT_MODULE, round(v * 100), repr(v))).encode('utf-8')
-VERSION = '4.6.8'
+VERSION = '5.0.0'
 NAME_SUFFIX = ''   # '' for releases, e.g. ' Test 3' for test builds
 ARCHIVE = '9ba626afa44a3aa3.patch_0'        # the game archive the shared loader reads addons from
 LUA_TYPE, MAGIC = 0xa14e8dfa2cd117e2, 0xF0000011
-PARTS = ['engine_head', 'engine_body', 'layout_data', 'engine_layout', 'engine_state', 'engine_laser', 'engine_research', 'engine_armor', 'engine_logic', 'engine_sentry', 'engine_main']
+PARTS = ['engine_head', 'engine_body', 'layout_data', 'engine_layout', 'engine_state', 'icon_data', 'engine_laser', 'engine_research', 'engine_armor', 'engine_logic', 'engine_sentry', 'engine_main']
 GUID_LIVE = '6f1d2c8e-5a47-4b93-9e0a-3c7b1f4d8a21'
 GUID_DIAG = 'b2e84f17-0c6d-4a59-8f3e-91d5a7c2e640'
 GUID_TEST = '29dde155-0b2a-4534-aa21-25a8244297f3'   # test builds: sits next to the release in Arsenal
@@ -61,13 +72,18 @@ def archive(entries):
     return header(total) + rows + body
 
 # (4.6.6 Test 2+) research probe (engine_probe.lua): numbered Tester builds only, never a release or a release's Tester
-PROBE_PART, PROBE_BEFORE = 'engine_probe', 'engine_main'
+PROBE_PART, PROBE_BEFORE = 'engine_probe5', 'engine_main'   # (5.0.0 Test 4: gunship lead and body parts; engine_probe.lua, the ping probe, is shelved)
 
 def source(read_only, tester=False):
     parts = list(PARTS)
     if tester and NAME_SUFFIX:
         parts.insert(parts.index(PROBE_BEFORE), PROBE_PART)
     src = ''.join(open(os.path.join(HERE, p + '.lua'), encoding='utf-8').read() for p in parts)
+    # ((5.0 Test 9) Mod Options Menu refuses a row whose description is over 400 characters ("invalid description":
+    # the Targeting Laser row was missing from the menu in Tests 4-8))
+    import re
+    for m in re.finditer(r"key = '(\w+)'.*?description = '((?:[^'\\]|\\.)*)'", open(os.path.join(HERE, 'engine_main.lua'), encoding='utf-8').read(), re.S):
+        assert len(m.group(2).replace("\\'", "'")) <= 400, 'menu description too long: %s (%d)' % (m.group(1), len(m.group(2)))
     # ((4.6.6 review) the test switches must be off in the source, so a plain build can never ship one switched on:
     # before, each was only checked when the build turned it on)
     for flag in ("local TESTER = false", "local TEST_BUILD = false", "local RESEARCH = false", "local READ_ONLY = false"):
@@ -104,6 +120,9 @@ CORE_DIR, LASER_DIR, ARMOR_DIR, TEAM_DIR, SAFETY_DIR = 'Smarter Guard Dogs', 'Ta
 DOGS_DIR, SENTRIES_DIR, TESLA_DIR, PRIORITY_DIR = 'Guard Dogs', 'Sentries', 'Tesla Tower', 'Target Prioritization'
 GLOW_DIR = 'Targeting Laser Glow'
 SENTRY_SAFETY_DIR = 'Sentry Safety'
+SEAF_SAFETY_DIR = 'SEAF Safety'
+PING_DIR = 'Ping Targeting'
+MARKER_DIR = 'Targeting Marker'
 CORE_OPTION = 'Smarter Guard Dogs and Sentries'   # label of the main option in the mod manager
 
 def lua_archive_bytes(module, src):
@@ -127,7 +146,11 @@ def package(read_only, out_zip, tester=False):
     priority = lua_archive_bytes(PRIORITY_MODULE, addon_source('priority_addon.lua', PRIORITY_MODULE))
     glow = lua_archive_bytes(GLOW_MODULE, addon_source('glow_addon.lua', GLOW_MODULE))
     sentry_safety = lua_archive_bytes(SENTRY_SAFETY_MODULE, addon_source('sentry_safety_addon.lua', SENTRY_SAFETY_MODULE))
+    seaf_safety = lua_archive_bytes(SEAF_SAFETY_MODULE, addon_source('seaf_safety_addon.lua', SEAF_SAFETY_MODULE))
+    ping = lua_archive_bytes(PING_MODULE, addon_source('ping_addon.lua', PING_MODULE))
+    marker = lua_archive_bytes(MARKER_MODULE, addon_source('marker_addon.lua', MARKER_MODULE))
     brights = [(folder, lua_archive_bytes(BRIGHT_MODULE, bright_source(v))) for _, v, folder in BRIGHTS]
+    opacs = [(folder, lua_archive_bytes(OPAC_MODULE, opac_source(v))) for _, v, folder in OPACS]
     name = TITLE + (' (DIAGNOSTIC - read only)' if read_only else '')
     desc = (('TEST BUILD (disable the release while testing). ' if NAME_SUFFIX else '')
             + ('PERSONAL TESTER BUILD: the release plus F8 markers and extra test logging. Install instead of the release, not next to it. ' if tester else '')
@@ -164,27 +187,45 @@ def package(read_only, out_zip, tester=False):
              'autocannon and flame sentries leave alone enemies right next to one. Turn off to let them fire through sentries. Everything '
              'else keeps working.',
              'Image': 'options/option_sentry_safety.png', 'Include': [SENTRY_SAFETY_DIR]},
+            # (4.7.0) its own on/off item, after Sentry Safety (on by default)
+            {'Name': 'SEAF Safety', 'Description': 'Your guard dog and your sentries don\'t shoot through SEAF soldiers or civilians: they hold fire while one '
+             'is in their line of fire, don\'t swing their fire across one, and the mortars, the Tesla Tower and the rocket, autocannon and flame '
+             'sentries leave alone enemies right next to one. Turn off to let them fire through SEAF soldiers and civilians. Everything else keeps working.',
+             'Image': 'options/option_seaf_safety.png', 'Include': [SEAF_SAFETY_DIR]},
+            # (5.0.0) its own on/off item, after Intelligence (on by default)
+            {'Name': 'Ping Targeting', 'Description': 'Your sentries go for an enemy you or a teammate ping: each sentry that can hurt it '
+             'and has it in reach and in view turns to it first, for up to 20 seconds after the ping (the mortars fire on it wherever it is in '
+             'their range). The safety rules still come first, and a ping waits while an enemy is at the sentry\'s feet or right next to a helldiver. Turn off to let them pick their own targets. Everything else keeps working.',
+             'Image': 'options/option_ping.png', 'Include': [PING_DIR]},
             {'Name': 'Targeting Laser', 'Description': 'Laser out of the barrel of your guard dog and your sentries (not the mortars) toward their targets, shown '
-             'only on your screen: green while they fire, flashing red when the safety stops a shot (and a red ring around the rocket '
-             'sentry while an enemy is too close for it to fire), flashing yellow when the dog\'s target goes out of sight (cover or smoke), off '
-             'while the dog reloads. The Tesla Tower shows its reach as a yellow ring instead. Turn off to hide it.',
+             'only on your screen: a red beam along the barrel while they fire, flashing green when a friendly is in the way and the '
+             'safety holds the shot, off while the dog reloads. The Tesla Tower shows its reach as a red ring, and a red ring flashes around the rocket sentry while an enemy is too '
+             'close for it to fire. Turn off to hide it.',
              'Image': 'options/option_laser.png',
-             # (4.5: line or glow, a pick-one list; the first entry, the line, is the default)
+             # (4.5: line or glow, a pick-one list; the first entry is the default. (5.0 Test 14, the author: "make glow laser the
+             # first choice, it looks better and the markers already draw into the map, the laser would help you know what
+             # angle somethings coming in at") the glow first)
              'SubOptions': [
-                 {'Name': 'Line', 'Description': 'A thin, plain line with a small cross where it hits. Simple to look at, but walls and '
-                  'objects hide it.',
-                  'Image': 'options/option_laser.png', 'Include': [LASER_DIR]},
-                 {'Name': 'Glow', 'Description': 'A soft glowing beam with a bright spot on the target. It looks much better than '
-                  'the line, but it shows through walls and objects (the game draws it on top of the world).',
+                 {'Name': 'Glow', 'Description': 'A soft glowing beam with a bright spot on the target. It shows through walls and '
+                  'objects like the markers do, so you can see where your guns are firing from and at.',
                   'Image': 'options/option_laser.png', 'Include': [LASER_DIR, GLOW_DIR]},
+                 {'Name': 'Line', 'Description': 'A thin, plain line with a small cross where it hits. Walls and objects hide it.',
+                  'Image': 'options/option_laser.png', 'Include': [LASER_DIR]},
              ]},
+            # (5.0.0 Test 13, the author: "Targeting Marker should be an option that can be toggled") its own on/off item
+            {'Name': 'Targeting Marker', 'Description': 'The gun\'s stratagem icon over the enemy your guard dog or sentry is on, '
+             'shown only on your screen, like a ping: yellow while it is on that enemy, gray when the enemy goes out of sight (cover or '
+             'smoke). Only on enemies it can hurt and has in reach. Works with or without the Targeting Laser. Turn off to hide the '
+             'markers. Everything else keeps working.',
+             'Image': 'options/option_marker.png', 'Include': [MARKER_DIR]},
             # (armor skipping and target priority as one item: a pick-one list; the first entry is the default)
             {'Name': 'Intelligence', 'Description': 'How your dogs and sentries choose what to shoot. Armor Intelligence: they '
-             'leave alone armor they can\'t get through (Hulks, Chargers, Tanks and similar; the Rover also Scout Striders; the Laser '
+             'leave alone armor they can\'t get through (Tanks and similar; on Hulks and Chargers, judged by the part they aim at: a Hulk\'s '
+             'heatsink and a Charger\'s rear and underside are fair game; the Rover also Scout Striders; the Laser '
              'Sentry only what is above Heavy), fire only short bursts at Heavy Devastators, and no sentry wastes ammo on dropships '
              '(only the Rocket and Autocannon sentries shoot enemies still aboard one). Target Prioritization: your dog goes for the '
              'closest threat to you first; your sentries deal with enemies at their feet first, go for Gunships and Stingrays first '
-             '(the Rocket Sentry only while one hovers), then the armor that suits the gun (Heavy for the Rocket and Autocannon, '
+             'then the armor that suits the gun (Heavy for the Rocket and Autocannon, '
              'lighter for the Machine Gun, Gatling and Laser; the closest first for the Flame Sentry). Turn off to leave both to the game. Everything else keeps working.',
              'Image': 'options/option_armour.png',
              'SubOptions': [
@@ -199,6 +240,12 @@ def package(read_only, out_zip, tester=False):
              'Image': 'options/option_laser.png',
              'SubOptions': [{'Name': name, 'Description': 'The laser at %d%% of its normal brightness.' % round(v * 100) if v != 1 else 'The laser as it has always been.',
                              'Image': 'options/option_laser.png', 'Include': [folder]} for name, v, folder in BRIGHTS]},
+            # (5.0.0 Test 15, the author: "add targeting marker opacity as well, in case people want to tune how it appears")
+            {'Name': 'Marker Opacity', 'Description': 'How solid the targeting markers are drawn. Full is how they are designed; '
+             'lower lets more of the game show through them.',
+             'Image': 'options/option_marker.png',
+             'SubOptions': [{'Name': name, 'Description': 'The markers at %d%% opacity.' % round(v * 100) if v != 1 else 'The markers as designed.',
+                             'Image': 'options/option_marker.png', 'Include': [folder]} for name, v, folder in OPACS]},
             {'Name': 'Guard Dogs', 'Description': 'The mod handles your guard dog (Guard Dog, Rover, K-9). Turn off to leave '
              'your dog to the game; your sentries and the rest of the mod keep working.',
              'Image': 'options/option_dogs.png', 'Include': [DOGS_DIR]},
@@ -215,7 +262,7 @@ def package(read_only, out_zip, tester=False):
         ],
     }
     # (the order shown in the mod manager: the mod, what it handles, intelligence, safety, the laser)
-    order = [CORE_OPTION, 'Guard Dogs', 'Sentries', 'Intelligence', 'Safety', 'Sentry Safety', 'Targeting Laser', 'Laser Brightness']
+    order = [CORE_OPTION, 'Guard Dogs', 'Sentries', 'Intelligence', 'Ping Targeting', 'Safety', 'Sentry Safety', 'SEAF Safety', 'Targeting Laser', 'Laser Brightness', 'Targeting Marker', 'Marker Opacity']
     manifest['Options'].sort(key=lambda o: order.index(o['Name']))
     with zipfile.ZipFile(out_zip, 'w', zipfile.ZIP_DEFLATED) as z:
         z.writestr('manifest.json', json.dumps(manifest, indent=2))
@@ -223,7 +270,7 @@ def package(read_only, out_zip, tester=False):
         images = {opt['Image'] for opt in manifest['Options']} | {sub['Image'] for opt in manifest['Options'] for sub in opt.get('SubOptions', [])}
         for img in sorted(images):   # option icons (options_icons.py, options_icons2.py)
             z.write(os.path.join(HERE, 'build', img.replace('/', os.sep)), img)
-        for folder, pak in [(CORE_DIR, core), (SAFETY_DIR, safety), (TEAM_DIR, team), (SENTRY_SAFETY_DIR, sentry_safety), (DOGS_DIR, dogs), (SENTRIES_DIR, sentries), (TESLA_DIR, tesla), (PRIORITY_DIR, priority), (LASER_DIR, laser), (GLOW_DIR, glow), (ARMOR_DIR, armor)] + brights:
+        for folder, pak in [(CORE_DIR, core), (SAFETY_DIR, safety), (TEAM_DIR, team), (SENTRY_SAFETY_DIR, sentry_safety), (SEAF_SAFETY_DIR, seaf_safety), (PING_DIR, ping), (MARKER_DIR, marker), (DOGS_DIR, dogs), (SENTRIES_DIR, sentries), (TESLA_DIR, tesla), (PRIORITY_DIR, priority), (LASER_DIR, laser), (GLOW_DIR, glow), (ARMOR_DIR, armor)] + brights + opacs:
             z.writestr(folder + '/' + ARCHIVE, pak)
             z.writestr(folder + '/' + ARCHIVE + '.gpu_resources', b'')
             z.writestr(folder + '/' + ARCHIVE + '.stream', b'')

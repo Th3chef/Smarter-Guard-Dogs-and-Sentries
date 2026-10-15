@@ -24,6 +24,7 @@ local menu_step = (function()
   -- manager lists Normal first because it preselects its first entry. No 'Off' - without the option the laser is at its
   -- normal brightness, the same as 'Normal (100%)')
   local BRIGHT = { 0.5, 0.75, 1.0, 1.5, 2.0 }
+  local OPAC = { 0.25, 0.5, 0.75, 1.0 }   -- ((5.0 Test 15) Marker Opacity)
   -- each row, in the mod manager's order: its choices, which flags each sets, and the starting choice from the flags
   local OPTS = {
     { key = 'dogs', label = 'Guard Dogs', type = 'toggle',
@@ -35,9 +36,13 @@ local menu_step = (function()
       start = function() return not flag('Sentries') and 1 or (flag('Tesla') and 2 or 3) end },
     { key = 'intelligence', label = 'Intelligence', type = 'choice',
       choices = { 'Off', 'Armor Intelligence and Target Prioritization', 'Only Armor Intelligence', 'Only Target Prioritization' },
-      description = 'How your dogs and sentries choose what to shoot. Armor Intelligence: they leave alone armor they can\'t hurt, fire only short bursts at Heavy Devastators, and no sentry wastes ammo on dropships. Target Prioritization: your dog goes for the closest threat to you first; your sentries deal with enemies at their feet, Gunships and the armor that suits the gun first. Turn off to leave both to the game.',
+      description = 'How your dogs and sentries choose what to shoot. Armor Intelligence: they skip armor they can\'t hurt (Hulks and Chargers by the part they aim at), fire short bursts at Heavy Devastators and leave dropships alone. Target Prioritization: your dog takes the closest threat to you first; your sentries take enemies at their feet, Gunships and the right armor first. Turn off to leave both to the game.',
       apply = function(v) set('Armor', v == 2 or v == 3); set('Priority', v == 2 or v == 4) end,
       start = function() local a, p = flag('Armor'), flag('Priority'); return (a and p) and 2 or (a and 3) or (p and 4) or 1 end },
+    -- (5.0) Ping Targeting: its own on/off row, after Intelligence
+    { key = 'ping', label = 'Ping Targeting', type = 'toggle',
+      description = 'Your sentries go for an enemy you or a teammate ping: each sentry that can hurt it and has it in reach and in view turns to it first, for up to 20 seconds after the ping. The safety rules still come first, and a ping waits while an enemy is at the sentry\'s feet or right next to a helldiver. Turn off to let them pick their own targets.',
+      apply = function(v) set('Ping', v) end, start = function() return flag('Ping') end },
     { key = 'safety', label = 'Safety', type = 'choice', choices = { 'Off', 'You and your teammates', 'Only you', 'Only your teammates' },
       description = 'Who your dog and your sentries never fire through: they hold fire while that helldiver is in their line of fire, don\'t swing their fire across them, mortars and the rocket sentry leave enemies next to them alone, and the Tesla Tower doesn\'t zap them or arc into them. Turn off at your own risk: they will fire through anyone. Everything else keeps working.',
       apply = function(v) set('Safety', v == 2 or v == 3); set('Teammates', v == 2 or v == 4) end,
@@ -46,8 +51,12 @@ local menu_step = (function()
     { key = 'sentry_safety', label = 'Sentry Safety', type = 'toggle',
       description = 'Your sentries don\'t shoot through other sentries, yours or other players\': they hold fire while one is in their line of fire, don\'t swing their fire across one, and the mortars and the rocket, autocannon and flame sentries leave alone enemies right next to one. Turn off to let them fire through sentries. Everything else keeps working.',
       apply = function(v) set('SentrySafety', v) end, start = function() return flag('SentrySafety') end },
+    -- (4.7.0) SEAF Safety: its own on/off row, after Sentry Safety
+    { key = 'seaf_safety', label = 'SEAF Safety', type = 'toggle',
+      description = 'Your guard dog and your sentries don\'t shoot through SEAF soldiers or civilians: they hold fire while one is in their line of fire, don\'t swing their fire across one, and the mortars, the Tesla Tower and the rocket, autocannon and flame sentries leave alone enemies right next to one. Turn off to let them fire through SEAF soldiers and civilians. Everything else keeps working.',
+      apply = function(v) set('SEAFSafety', v) end, start = function() return flag('SEAFSafety') end },
     { key = 'laser', label = 'Targeting Laser', type = 'choice', choices = { 'Off', 'Line', 'Glow' },
-      description = 'Laser out of the barrel of your guard dog and your sentries (not the mortars) toward their targets, shown only on your screen: green while they fire, flashing red when the safety stops a shot, flashing yellow when the dog\'s target goes out of sight. The Tesla Tower shows its reach as a yellow ring. Line: thin, hidden by walls. Glow: a soft beam that shows through walls.',
+      description = 'A laser from the barrel of your guard dog and your sentries (not the mortars), only on your screen: red while they fire, flashing green when a friendly is in the way. The Tesla Tower shows its reach as a red ring. Glow: a soft beam that shows through walls, like the markers. Line: thin, hidden by walls.',
       apply = function(v) set('Laser', v ~= 1); set('Glow', v == 3) end,
       start = function() return not flag('Laser') and 1 or (flag('Glow') and 3 or 2) end },
     { key = 'laser_brightness', label = 'Laser Brightness', type = 'choice',
@@ -59,6 +68,22 @@ local menu_step = (function()
         if type(b) ~= 'number' then return 3 end
         local best, bd = 3, nil
         for i, x in ipairs(BRIGHT) do if not bd or math.abs(x - b) < bd then best, bd = i, math.abs(x - b) end end
+        return best
+      end },
+    -- (5.0 Test 13) Targeting Marker: its own on/off row, after Laser Brightness
+    { key = 'marker', label = 'Targeting Marker', type = 'toggle',
+      description = 'The gun\'s stratagem icon over the enemy your guard dog or sentry is on, only on your screen: yellow while it is on it, gray when it goes out of sight. Only on enemies it can hurt and has in reach. Works with or without the Targeting Laser. Turn off to hide the markers.',
+      apply = function(v) set('Marker', v) end, start = function() return flag('Marker') end },
+    -- (5.0 Test 15) Marker Opacity: how see-through the markers are (dimmest first, like Laser Brightness)
+    { key = 'marker_opacity', label = 'Marker Opacity', type = 'choice',
+      choices = { 'Faint (25%)', 'Light (50%)', 'Medium (75%)', 'Full (100%)' },
+      description = 'How solid the targeting markers are drawn. Full is how they are designed; lower lets more of the game show through them.',
+      apply = function(v) if OPAC[v] then rawset(_G, 'SmarterGuardDogsMarkerOpacity', OPAC[v]) end end,
+      start = function()
+        local o = rawget(_G, 'SmarterGuardDogsMarkerOpacity')
+        if type(o) ~= 'number' then return 4 end
+        local best, bd = 4, nil
+        for i, x in ipairs(OPAC) do if not bd or math.abs(x - o) < bd then best, bd = i, math.abs(x - o) end end
         return best
       end },
   }
@@ -92,9 +117,22 @@ end)()
 
 -- (4.6.3) this frame's laser: the dog's beam and the sentries' beams, drawn together (called in a pcall from tick)
 laser.step = function(st, sentries_out, t)
+  laser.me = (st and st.player_pos) or EXT.me   -- ((5.0) beams fade with their distance from you)
   local beams = {}
+  laser.dog_target = false
   if st then laser_frame(st, beams, P.safety_now and P.safety_t or nil, P.safety_enemy, P.safety_step, P.cover_t, P.cover_enemy, P.cover_step) end
   if sentries_out then sentry_beams(beams, t) end
+  -- ((5.0 Test 13, the author: "Targeting Marker should be an option that can be toggled") the markers belong to the
+  -- Targeting Marker option, the beams and rings to the Targeting Laser: whatever is off is dropped here
+  local lines_on, marks_on = rawget(_G, 'SmarterGuardDogsLaser') == true, OPT.marker()
+  if not (lines_on and marks_on) then
+    local kept = {}
+    for _, b in ipairs(beams) do
+      if (b.marker and marks_on) or (not b.marker and lines_on) then kept[#kept + 1] = b end
+    end
+    kept.rings = lines_on and beams.rings or nil
+    beams = kept
+  end
   if #beams > 0 or beams.rings then laser_draw(beams) else laser_clear() end
 end
 
@@ -188,8 +226,11 @@ local function tick()
       end
     end
     next_poll = 0
-    steer(st, plan(st))
+    local dreq = plan(st)
+    steer(st, dreq)
+    if SGD.probe_dog then SGD.probe_dog(st, t) end   -- (numbered Tester builds: the research probe)
     if TESTER then
+      pcall(SGD.dog_seaf_check, st, dreq, t)
       pcall(check_marker, st)
       -- how the dog spends its time while out: docked on your back (reloading), no target, or its AI step
       local P2, D = st.player_pos, st.drone_pos
