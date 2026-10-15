@@ -14,7 +14,7 @@
 --    Targeting Laser (your screen only).
 --  * Finds the game addresses it needs by scanning the game's code after a patch.
 -- Keeps a small status log (SmarterGuardDogsAndSentries.log) in the local app-data folder for bug reports.
-local VERSION = '4.6.8'
+local VERSION = '5.0.0'
 local READ_ONLY = false            -- diagnostic builds set this to true: nothing is ever written to game memory
 local TESTER = false               -- test builds only: F8 markers and the list of enemy types the dog picked, in the log
 local TEST_BUILD = false           -- (4.6.4) numbered test builds (Test 1, 2, ...): their logs go in Logs\test (build.py sets it)

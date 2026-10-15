@@ -71,7 +71,7 @@ local last_reason, last_error = '-', nil
 local T0 = os.clock()
 -- session summary: how long each state lasted, which dogs were seen, what the mod did, and recent events
 local session = { statuses = {}, state_time = {}, dog_time = {}, actions = {}, events = {}, errors = {}, dirty = true,
-  started = os.date('%Y-%m-%d %H:%M'), markers = {}, types = {}, type_list = {}, steps = {}, noshots = {},
+  started = os.date('%Y-%m-%d %H:%M'), markers = {}, types = {}, type_list = {}, steps = {}, noshots = {}, parts = {},
   team = { max = 0, stops = 0, last = 0, notes = 0 }, sentries = {}, sentry_nodes = {}, sentry_types = {}, other_sentries = 0 }
 local function event(msg)
   local line = string.format('%8.1fs  %s', os.clock() - T0, msg)
@@ -118,6 +118,10 @@ local function write_log_to(f)
     or (session.team.max > 0 and string.format('teammates: up to %d seen at once, safety stops for a teammate: %d\n', session.team.max,
       (function() local n = session.team.stops; for _, d in pairs(session.sentries) do n = n + (d.mate_stops or 0) end; return n end)())   -- (the dog's and the sentries')
     or 'teammates: none seen\n'))
+  -- (4.7.0 SEAF Safety) the dog's stops for SEAF soldiers and civilians (the sentries' are in their own lines)
+  if (session.team.seaf_stops or 0) + (session.team.civ_stops or 0) > 0 then
+    f:write(string.format('dog safety stops for SEAF: %d, for a civilian: %d\n', session.team.seaf_stops or 0, session.team.civ_stops or 0))
+  end
   -- sentries (4.0): per kind, how long yours were out and what the mod did with them
   f:write('sentries:' .. (next(session.sentries) and '' or ' none of yours out yet') .. '\n')
   local snames = {}
@@ -125,8 +129,8 @@ local function write_log_to(f)
   table.sort(snames)
   for _, name in ipairs(snames) do
     local d = session.sentries[name]
-    f:write(string.format('  %-18s placed %d%s, out %s, with a target %.0f%% of that; safety stops %d (for a teammate %d%s), armor skips %d, priority switches %d%s%s%s%s%s%s%s%s\n',
-      name, d.placed, (d.max_out or 0) > 1 and string.format(' (up to %d out at once)', d.max_out) or '', mmss(d.out), d.out > 0 and 100 * d.targeted / d.out or 0, d.stops, d.mate_stops, (d.sentry_stops or 0) > 0 and string.format(', for a sentry %d', d.sentry_stops) or '', d.armour, d.priority or 0,
+    f:write(string.format('  %-18s placed %d%s, out %s, with a target %.0f%% of that; safety stops %d (for a teammate %d%s%s%s), armor skips %d, priority switches %d%s%s%s%s%s%s%s%s\n',
+      name, d.placed, (d.max_out or 0) > 1 and string.format(' (up to %d out at once)', d.max_out) or '', mmss(d.out), d.out > 0 and 100 * d.targeted / d.out or 0, d.stops, d.mate_stops, (d.sentry_stops or 0) > 0 and string.format(', for a sentry %d', d.sentry_stops) or '', (d.seaf_stops or 0) > 0 and string.format(', for SEAF %d', d.seaf_stops) or '', (d.civ_stops or 0) > 0 and string.format(', for a civilian %d', d.civ_stops) or '', d.armour, d.priority or 0,
       d.cooldowns and string.format(', cool-downs %d', d.cooldowns) or '',
       d.sentry_burst_done and string.format(', short bursts %d', d.sentry_burst_done) or '',
       d.sentry_spread and string.format(', set alight and moved on %d', d.sentry_spread) or '',
@@ -151,6 +155,8 @@ local function write_log_to(f)
       if Pt.n > 0 then f:write(string.format('  %-28s %d times, average %.3f ms, highest %.2f ms, over 1 ms %d\n', Pt.name, Pt.n, Pt.sum / Pt.n, Pt.max, Pt.over)) end
     end
   end
+  -- ((5.0 Test 12) part armor: each time a gun's answer on a Hulk or Charger changed, and what its line of fire met)
+  if next(session.parts) then write_counts(f, 'part armor (answer changes: what the line of fire met)', session.parts) end
   if TESTER then write_counts(f, 'enemy types the dog picked (type id: times; for bug reports)', session.types) end
   if TESTER and next(session.steps) then write_counts(f, 'what the dog was doing while out (polls; AI step 6 = lining up, 7 = firing)', session.steps) end
   if TESTER and next(session.sentry_nodes) then write_counts(f, 'what the sentries were doing (polls; by AI step)', session.sentry_nodes) end
@@ -172,6 +178,20 @@ local function write_log()
   local buf = { write = function(_, ...) for i = 1, select('#', ...) do n = n + 1; parts[n] = select(i, ...) end end }
   local ok, err = pcall(write_log_to, buf)
   if not ok then error(err, 0) end
+  -- ((5.0 Test 9) test builds: the last game session's log is kept as -prev.log before this session's first write -
+  -- a restarted game wrote over the mission the author had just played)
+  if (TEST_BUILD or TESTER) and not session.prev_kept then
+    session.prev_kept = true
+    pcall(function()
+      local o = io.open(LOGDIR .. '\\SmarterGuardDogsAndSentries.log', 'r')
+      local old = o and o:read('*a')
+      if o then o:close() end
+      if old and #old > 0 then
+        local w = io.open(LOGDIR .. '\\SmarterGuardDogsAndSentries-prev.log', 'w')
+        if w then w:write(old); w:close() end
+      end
+    end)
+  end
   local f = io.open(LOGDIR .. '\\SmarterGuardDogsAndSentries.log', 'w')
   if not f then return end
   f:write(table.concat(parts, '', 1, n))
@@ -301,7 +321,12 @@ for h, n in pairs({
   -- Automatons
   a6a68d8af177f3a1 = 'Berserker', ['0002ba767df856f3'] = 'Trooper (tier 3)', d8cbc4a807a6d035 = 'Trooper (melee)', ['2c1a7790c435fd67'] = 'Automaton MG Emplacement', a71aafd82c6ebc92 = 'Conscript commander', ['746a7f3beda32699'] = 'Elite Rusher', ['282eb766c1ffa6a1'] = 'Gunship',
   ['856e9710e45e760f'] = 'Trooper (jump pack, melee)', d37e8d120d2836e3 = 'Factory Strider',
+  d1e990baf22d5a52 = 'Predator Stalker', ['883401af2a98a5f6'] = 'Predator Hunter',
 }) do LABELS[type_hash(h)] = n end
+-- ((5.0 Test 18, the author: the Rover "was avoiding a predator strain stalker") enemies that cloak: while cloaked the game marks
+-- them out of its line of sight, so the cover rule (no firing into walls) hid them - a Stalker closing in on you left alone.
+-- They count as in sight (read_candidates)
+SGD.cloaks = { [type_hash('f540ca9d9d4a422e')] = true, [type_hash('d1e990baf22d5a52')] = true }   -- Stalker, Predator Stalker
 -- (4.0) names from the HD2 Enemy Codex (the enemy models matched to their wiki pages; names checked by a tester);
 -- armored enemies are named by the armor list (engine_armor.lua) instead
 for h, n in pairs({
@@ -333,7 +358,10 @@ for h, n in pairs({
 local DOGS = {
   { name = 'Rover', pack = type_hash('af9b683ccb6ddc02'), drone = type_hash('5beec97f4c7f4ae9'), laser = true,
     fast = true, radius = 0.35, safety_keep = 0.4, linger = 0.3, range = 35,
-    gun = type_hash('2c66c201b2543d2c'), beam_to_aim = true },   -- (4.5.3: its laser comes out of its barrel too, a tester's call)
+    gun = type_hash('2c66c201b2543d2c'), barrel = { 2, 1 } },   -- (4.5.3: its laser comes out of its barrel too, a tester's call)
+    -- ((5.0 Test 5, the author: "the beam should follow where the actual gun is turned like an actual laser mount")
+    -- barrel: its muzzle part's axis 2, forward - the axis Test 17 kept finding - followed as it is, sweep and all,
+    -- with no learning and no dropping; the old beam_to_aim (muzzle to the game's aim point) is gone)
     -- (4.5.3 Test 17: gun = its weapon's own entity, from a tester's Test 15 log; beam_to_aim: its muzzle part twists as
     -- it sweeps its beam over what it burns - the barrel axis was found and lost four times and the beam ran up to 19
     -- degrees off the game's aim - so its laser runs from its muzzle to where the game aims it)
@@ -341,7 +369,7 @@ local DOGS = {
     -- beyond ~35 m it often lines up without firing, so farther enemies wait while something closer is available:
     -- it is a guard dog, the enemies near you come first)
   { name = 'K-9', pack = type_hash('c28da712b12e3dfa'), drone = type_hash('4b071633584e4594'), laser = true,
-    fast = false, radius = 0.6, chain = 3.0, aim_rise = 1.0, gun = type_hash('a0532c3616528cbf'), beam_to_aim = true },   -- (gun: 4.5.3 Test 15 log)
+    fast = false, radius = 0.6, chain = 3.0, aim_rise = 1.0, gun = type_hash('a0532c3616528cbf'), barrel = { 2, 1 } },   -- (gun: 4.5.3 Test 15 log; (5.0) barrel as the Rover's)
     -- (4.5.3 Test 18: beam_to_aim like the Rover's - its arc weapon's muzzle part lost its barrel direction twice in a
     -- tester's Test 17 log (0.697, 0.883) and the laser twitched at times)   -- (4.5.3: out of its barrel too; its arc weapon sways, and so does the laser)
   { name = 'Guard Dog', pack = type_hash('255ebc5767d7ceec'), drone = type_hash('a0ff2f9a0ca6992a'), laser = false,
@@ -380,14 +408,16 @@ for _, d in ipairs(DOGS) do DOG_BY_PACK[d.pack] = d end
 --    without it 100 m (Autocannon, Rocket)
 --  barrel_min (4.6.4): the match its barrel axis needs to be learned (default 0.97): the Flame Sentry's arcing stream
 --    only lines up with its barrel to about 0.969 (a 4.6.3 Tester log), so its turns went unchecked
+--  laser_axis: (5.0 Test 7) the muzzle part's axis the laser runs along when the kind has no barrel_axis (rocket, autocannon:
+--   axis 2, the tubes'/barrel's direction in the game models, as the other sentries'); used by the laser only
 --  laser_at_enemy: no barrel axis to follow (rocket, autocannon): the laser runs from the muzzle to where the game aims
 --  the gun. Every other sentry's laser comes out along its barrel (4.5.3)
 -- The log says when a sentry-like AI shows up with a type that isn't in this list.
 local SENTRIES = {
   { name = 'Machine Gun Sentry', type = type_hash('37cde43876ba26bb'), ai = 312, line = 0.45, spread = 0.01, sweep = true, barrel_axis = 2, pen = 3, bursts = true, reach = 75, prefer = 'light' },
   { name = 'Gatling Sentry', type = type_hash('ef85d6cf58e31d70'), ai = 213, line = 0.5, spread = 0.015, sweep = true, barrel_axis = 2, pen = 3, bursts = true, loss_time = true, reach = 75, prefer = 'light', air_first = true },
-  { name = 'Autocannon Sentry', type = type_hash('54d86057f5dacfb9'), ai = 5, line = 0.45, spread = 0.005, splash = 2.0, prefer = 'heavy', air_first = true, hits_carried = true, laser_at_enemy = true, salvo = true },   -- (type confirmed in game; unit hellpod/autocannon_turret/autocannon_turret)
-  { name = 'Rocket Sentry', type = type_hash('37079568dc86e9c6'), ai = 611, line = 0.6, spread = 0.01, splash = 4.5, min_range = 10, prefer = 'heavy', air_first = true, hits_carried = true, laser_at_enemy = true,
+  { name = 'Autocannon Sentry', type = type_hash('54d86057f5dacfb9'), ai = 5, line = 0.45, spread = 0.005, splash = 2.0, prefer = 'heavy', air_first = true, hits_carried = true, laser_at_enemy = true, laser_axis = 2, salvo = true },   -- (type confirmed in game; unit hellpod/autocannon_turret/autocannon_turret)
+  { name = 'Rocket Sentry', type = type_hash('37079568dc86e9c6'), ai = 611, line = 0.6, spread = 0.01, splash = 4.5, min_range = 10, prefer = 'heavy', air_first = true, hits_carried = true, laser_at_enemy = true, laser_axis = 2,
     salvo_node = 13 },   -- (mid-salvo it ignores being asked to choose again)
   -- (heat: the wiki says it heats 8 degrees a second while firing, burns out at 250 and cools 3.8-7.5 a second; in game it
   -- overheated after about 28 s on targets, so the estimate uses 11 a second. The game's own heat meter is used when found)

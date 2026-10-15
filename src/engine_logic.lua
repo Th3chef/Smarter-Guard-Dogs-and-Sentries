@@ -139,12 +139,47 @@ end
 TEAM = { margin = 0.1, lead = 0.2, reach = 90 }
 
 -- the bodies to keep out of the line of fire: you, then each teammate near enough to matter
+-- (Testers, 5.0 Test 9, the author: "rover and seaf troops is better, but not 100%") while the dog fires, any SEAF soldier
+-- or civilian within 0.6 m of its line to its target is logged (at most once a second, 15 a session): how close, how far
+-- from the dog, whether the mod was hiding that target from it and the dog's AI step - to see what still gets through
+SGD.dog_seaf_check = function(st, req, t)
+  if st.node ~= 7 or st.target == 0 or not TEAM.seaf_bodies then return end
+  local S = session.team
+  if (S.seaf_close_notes or 0) >= 15 or t < (S.seaf_close_next or 0) then return end
+  local D, to = st.drone_pos, nil
+  for _, c in ipairs(st.candidates) do if c.id == st.target and c.pos then to = { c.pos[1], c.pos[2], c.pos[3] + 0.5 } end end
+  local fb = to and D and TEAM.seaf_bodies(os.clock(), st.player_pos)
+  if not fb then return end
+  for _, b in ipairs(fb) do
+    if not b.lead then
+      local d = segment_distance(D, to, b.lo, b.hi)
+      if d < 0.6 then
+        S.seaf_close_notes, S.seaf_close_next = (S.seaf_close_notes or 0) + 1, t + 1
+        local a = b.at
+        event(string.format('dog SEAF (test): %s firing at %d with %s %.2f m from its line, %.1f m from the dog, %.1f m from the enemy; hidden from it: %s',
+          st.dog.name, st.target, b.civ and 'a civilian' or 'a SEAF soldier', d, math.sqrt((a[1] - D[1]) ^ 2 + (a[2] - D[2]) ^ 2 + (a[3] - D[3]) ^ 2),
+          math.sqrt((a[1] - to[1]) ^ 2 + (a[2] - to[2]) ^ 2), (req and req.block and req.block[st.target]) and 'yes (the game kept firing)' or 'no'))
+        return
+      end
+    end
+  end
+end
 local function bodies_of(st)
   local me = st.player_pos
   -- (you only with the Safety option on; teammates with the Teammate safety option on)
   local out = {}
   if OPT.safety() then out[1] = { lo = { me[1], me[2], me[3] + SAFE.body_bottom }, hi = { me[1], me[2], me[3] + SAFE.body_top }, at = me, extra = 0 } end
   local D = st.drone_pos
+  -- (4.7.0 SEAF Safety, the author: the guard dogs too) the SEAF soldiers and civilians the sentry code keeps track of
+  -- (TEAM.seaf_bodies, set there: their places read twenty times a second (Test 9; ten before), with a look-ahead when they move). Only those
+  -- within the dog's reach of it; the option off or none around: nil
+  local fb = TEAM.seaf_bodies and TEAM.seaf_bodies(os.clock(), me)
+  if fb then
+    for _, b in ipairs(fb) do
+      local a = b.at
+      if (a[1] - D[1]) ^ 2 + (a[2] - D[2]) ^ 2 < TEAM.reach ^ 2 then out[#out + 1] = b end
+    end
+  end
   for _, m in ipairs(st.mates or {}) do
     if (m[1] - D[1]) ^ 2 + (m[2] - D[2]) ^ 2 < TEAM.reach ^ 2 then
       out[#out + 1] = { lo = { m[1], m[2], m[3] + SAFE.body_bottom }, hi = { m[1], m[2], m[3] + SAFE.body_top }, at = m, extra = TEAM.margin, mate = true }
@@ -186,7 +221,7 @@ local function unsafe_enemies(st)
       end
       for bi, b in ipairs(bodies) do
         local a = b.at
-        if not b.mate or (a[1] - D0[1]) ^ 2 + (a[2] - D0[2]) ^ 2 + (a[3] - D0[3]) ^ 2 < reach2 then
+        if not (b.mate or b.seaf) or (a[1] - D0[1]) ^ 2 + (a[2] - D0[2]) ^ 2 + (a[3] - D0[3]) ^ 2 < reach2 then
           for i, D in ipairs(spots) do
             for k = 1, #heights do
               local d = segment_distance(D, AIM_PTS[k], b.lo, b.hi) - b.extra
@@ -197,13 +232,14 @@ local function unsafe_enemies(st)
               local vx, vy = p[1] - D[1], p[2] - D[2]
               local wx, wy, wz = a[1] - p[1], a[2] - p[2], a[3] + 1.0 - p[3]
               if vx * wx + vy * wy > 0 and math.sqrt(wx * wx + wy * wy + wz * wz) < dog.chain then
-                closest = 0; why = why or ('arc would chain to ' .. (b.mate and 'a teammate' or 'you'))
+                closest = 0; why = why or ('arc would chain to ' .. (b.civ and 'a civilian' or b.seaf and 'a SEAF soldier' or b.mate and 'a teammate' or 'you'))
               end
             end
             if closest < radius then
               if TESTER and i > 1 and not why then st.unsafe_from = st.unsafe_from or {}; st.unsafe_from[c.id] = D end
-              why = why or (i == 1 and (b.mate and 'a teammate is in its line of fire' or 'you are in its line of fire')
-                or (b.mate and 'a teammate would be in its line after the turn' or 'you would be in its line after the turn'))
+              local who = b.civ and 'a civilian' or b.seaf and 'a SEAF soldier' or b.mate and 'a teammate'
+              why = why or (i == 1 and (who and (who .. ' is in its line of fire') or 'you are in its line of fire')
+                or (who and (who .. ' would be in its line after the turn') or 'you would be in its line after the turn'))
               break
             end
           end
@@ -293,7 +329,14 @@ local COMMIT = { after = 1.0, burst = 0.6, timeout = 4.0 }
 -- enemies it can't reach): Rover 1 s; Guard Dog/K-9 1 s beyond 25 m and 2 s closer (they line up slower); and the
 -- current pick must have had at least 'fair' seconds of it in one go (so line-ups cut short by the mod's own
 -- switching don't add up to setting everything aside)
-local NOSHOT = { rover = 1.0, far = 1.0, other = 2.0, fair = 0.6, far_m = 25, rest = 4.0, forget = 5.0 }
+local NOSHOT = { rover = 1.0, far = 1.0, other = 2.0, fair = 0.6, far_m = 25, rest = 4.0, forget = 5.0,
+  -- ((5.0 Test 17, the author: the Rover "didnt properly prioritize enemies closer to me, and was actually avoiding one for a
+  -- while" - a Test 16 log: a Bile Warrior 9 m from him set aside for 4 s after a 1 s line-up) an enemy within 'near_m' of
+  -- you is a threat: it gets 'near' seconds of line-up before it is set aside, and then only for 'near_rest'
+  near_m = 15, near = 2.0, near_rest = 1.5,
+  -- (an enemy set aside again within 'again' seconds gets the full rest: one it truly can't reach - stuck under the map
+  -- right next to you - must not hold the dog for good)
+  again = 15 }
 
 -- ((4.6.4 review) without packing the sets into a table first: one less table per call, several per frame)
 function union(...)
@@ -424,17 +467,28 @@ function plan(st)
   -- line-up time without a shot, per enemy (kept across re-picks, reset as soon as the dog fires at it)
   if st.target ~= 0 then
     local L = P.lineup[st.target] or { acc = 0 }
-    if st.node == 6 then L.acc = L.acc + dt elseif st.node == 7 and st.synced then L.acc = 0 end
+    -- ((5.0 Test 17) not while the safety is what keeps it from firing - you in its line, or about to be: that is not the
+    -- dog being unable to get a shot, and setting the enemy aside for it left a close one alone for seconds)
+    local held = P.unsafe_seen and P.unsafe_seen[st.target] and t - P.unsafe_seen[st.target] < 1.0
+    if st.node == 6 and not held then L.acc = L.acc + dt elseif st.node == 7 and st.synced then L.acc = 0 end
     L.t = t; P.lineup[st.target] = L
   end
   for id, L in pairs(P.lineup) do if t - L.t > NOSHOT.forget then P.lineup[id] = nil end end
+  if P.noshot_last then for id, tl in pairs(P.noshot_last) do if t - tl > NOSHOT.again then P.noshot_last[id] = nil end end end
   local tgt_c
   for _, c in ipairs(st.candidates) do if c.id == st.target then tgt_c = c end end
   local noshot_limit = st.dog.fast and NOSHOT.rover or ((tgt_c and tgt_c.d2 and tgt_c.d2 > NOSHOT.far_m ^ 2) and NOSHOT.far or NOSHOT.other)
+  local mp = st.player_pos
+  local near = tgt_c and tgt_c.pos and mp and (tgt_c.pos[1] - mp[1]) ^ 2 + (tgt_c.pos[2] - mp[2]) ^ 2 + (tgt_c.pos[3] - mp[3]) ^ 2 < NOSHOT.near_m ^ 2
+  if near then noshot_limit = math.max(noshot_limit, NOSHOT.near) end
   local L_now = st.target ~= 0 and P.lineup[st.target]
   if L_now and L_now.acc >= noshot_limit and P.fire == 0 and P.lock >= math.min(noshot_limit, NOSHOT.fair) then
-    P.noshot[st.target] = t + NOSHOT.rest
-    st.noshot_new, st.noshot_acc = st.target, L_now.acc
+    P.noshot_last = P.noshot_last or {}
+    local before = P.noshot_last[st.target]
+    local rest = (near and not (before and t - before < NOSHOT.again)) and NOSHOT.near_rest or NOSHOT.rest
+    P.noshot_last[st.target] = t
+    P.noshot[st.target] = t + rest
+    st.noshot_new, st.noshot_acc, st.noshot_rest = st.target, L_now.acc, rest
     L_now.acc = 0
   end
   st.lineup_acc = L_now and L_now.acc or 0
@@ -462,7 +516,7 @@ function plan(st)
   for _, c in ipairs(st.candidates) do
     -- (every live one, not just those the dog rates worth shooting right now: it still picks those now and then)
     if c.alive or c.mask == '    ' or c.id == st.target then
-      if cannot_hurt(st.dog, c) then N[c.id] = true
+      if cannot_hurt(st.dog, c, st.drone_pos, st.dog.name) then N[c.id] = true
       -- (its current target gets a short grace while it is lining up, but none while it is firing: the moment an
       -- enemy it is shooting at drops out of sight it stops, the same as when its target dies)
       elseif COVER and not c.visible and (c.id ~= st.target or (c.memory or 0) <= COVER_GRACE or st.node == 7) then C[c.id] = true end
@@ -819,7 +873,7 @@ local function note_action(st, req)
     event(string.format('%sno_shot: %s (target %d, type %s%s%s, %s, score %.2f; %s)',
       READ_ONLY and 'would ' or '', st.dog.name, st.target, c and c.kind and hexr(c.kind) or '?', nm and (' ' .. nm) or '', where,
       c and (c.visible and 'in sight' or 'out of sight') or '?', c and c.score or -1,
-      st.noshot_new == st.target and string.format('lined up %.1fs without firing, hidden %.0fs', st.noshot_acc or 0, NOSHOT.rest)
+      st.noshot_new == st.target and string.format('lined up %.1fs without firing, hidden %.1fs', st.noshot_acc or 0, st.noshot_rest or NOSHOT.rest)
         or 'picked again while still set aside'))
     return
   end
@@ -841,7 +895,10 @@ local function note_action(st, req)
   local now_t = os.clock()
   if safety_noted.target == st.target and now_t - safety_noted.t < 3 then safety_noted.t = now_t; return end
   safety_noted.target, safety_noted.t = st.target, now_t
-  if (st.unsafe_why and st.unsafe_why[st.target] or ''):find('teammate') then session.team.stops = session.team.stops + 1 end
+  local w = st.unsafe_why and st.unsafe_why[st.target] or ''
+  if w:find('teammate') then session.team.stops = session.team.stops + 1
+  elseif w:find('SEAF') then session.team.seaf_stops = (session.team.seaf_stops or 0) + 1
+  elseif w:find('civilian') then session.team.civ_stops = (session.team.civ_stops or 0) + 1 end
   local c
   for _, x in ipairs(st.candidates) do if x.id == st.target then c = x end end
   local me = st.player_pos
