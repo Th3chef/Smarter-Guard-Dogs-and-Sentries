@@ -1,5 +1,16 @@
 # Changelog
 
+## 5.0.0
+
+- Part armor (Armor Intelligence): dogs and sentries judge a Hulk or Charger by the part they're aiming at, so they fire on a Hulk's heatsink and a Charger's rear or underside and still leave the armored front alone. If the part can't be worked out, the whole-enemy armor rule is used as before.
+- New Ping Targeting option: your sentries go for an enemy you or a teammate ping (up to 20 s), safety first; a ping waits while an enemy is at the sentry's feet or right next to a helldiver.
+- New SEAF Safety option: your guard dog and sentries don't fire through SEAF soldiers or civilians.
+- New Targeting Marker and Marker Opacity options: each dog and sentry shows its own stratagem icon over its target (yellow on target, gray when it goes out of sight), only on enemies it can hurt and has in reach, side by side when several guns share a target, facing you from any angle.
+- Targeting laser rework: the beam runs along each gun's barrel like a mounted laser, red while firing and flashing green when a friendly is in the way. Glow is now the default. The Tesla Tower's ring is red, and the Rocket Sentry's too-close ring is thicker.
+- Cloaked Stalkers and Predator Stalkers are no longer avoided as if they were behind cover.
+- The guard dog no longer sets aside an enemy close to you because the safety held its shot, and its marker stays on its target the whole time.
+- Fixes and speed-ups from the release review: ping and part armor recover from a bad read, the safety laser blinks evenly, markers stay in place, and less work per frame.
+
 ## 4.6.8
 
 Fixed the Rocket Sentry's red minimum-range ring staying on screen after the sentry was gone (it stayed through extraction, on the ship and in later missions until the game was restarted). The ring flashes again as it should, and the same fix covers the Tesla Tower's ring.
