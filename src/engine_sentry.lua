@@ -2291,9 +2291,14 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
   -- its target), and a flashing red ring around the rocket sentry while an enemy is inside its minimum range
   -- ((5.0) key, tg: whose beam and on which target - a new target swings its end over, see laser.prepare)
   -- ((5.0 Test 7) fixed: the beam runs along the barrel, so its end isn't swung over to a new target - the barrel turns it)
-  local function add_beam(beams, M, to, argb, dot, key, tg, fixed)
+  -- ((5.1.1, the author: the Supply FRV gun's laser "origin point is too far out") the beam starts 'inset' m ahead of
+  -- the fire node (0.2 by default, so it leaves the barrel's mouth on guns whose fire node sits inside it); a def's
+  -- 'beam_inset' overrides it - the Supply FRV gun and the Resupply Pod Gun (the same gun model) have their fire node
+  -- at the barrel's tip already (the game model's muzzle bone), so theirs is 0
+  local function add_beam(beams, M, to, argb, dot, key, tg, fixed, inset)
     local v, len = norm({ to[1] - M[1], to[2] - M[2], to[3] - M[3] })
-    if v and len > 1 then beams[#beams + 1] = { from = { M[1] + v[1] * 0.2, M[2] + v[2] * 0.2, M[3] + v[3] * 0.2 }, to = to, argb = argb, dot = dot, key = key, tg = tg, fixed = fixed } end
+    local k = inset or 0.2
+    if v and len > 1 then beams[#beams + 1] = { from = { M[1] + v[1] * k, M[2] + v[2] * k, M[3] + v[3] * k }, to = to, argb = argb, dot = dot, key = key, tg = tg, fixed = fixed } end
   end
   -- ((5.0 Test 7) where the barrel points, as far as 'to': the end of a laser fixed on the gun, and whether that end is on
   -- the target (for the cross); nil when the barrel's direction can't be read. The barrel: the axis learned or set for
@@ -2403,7 +2408,7 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
           local c = st.current
           if st.target ~= 0 and c and c.pos then
             local p = live(c)
-            add_beam(beams, M, { p[1], p[2], p[3] + AIM_UP[2] }, EXT.FIRE, true, s.id, st.target)
+            add_beam(beams, M, { p[1], p[2], p[3] + AIM_UP[2] }, EXT.FIRE, true, s.id, st.target, nil, s.def.beam_inset)
           end
         elseif P.safety_t and t - P.safety_t < EXT.RED_SECONDS then
           local e
@@ -2416,7 +2421,7 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
             local p = live(e)
             local to = { p[1], p[2], p[3] + AIM_UP[2] }
             local be = barrel_end(s, st, M, to, e)
-            add_beam(beams, M, be or to, EXT.FRIEND, nil, nil, nil, be ~= nil)
+            add_beam(beams, M, be or to, EXT.FRIEND, nil, nil, nil, be ~= nil, s.def.beam_inset)
           end
         elseif P.oos_t and t - P.oos_t < EXT.RED_SECONDS and st.target ~= P.oos_enemy
           and not (st.target ~= 0 and st.node == (s.def.fire_node or FIRE_NODE)) then
@@ -2455,7 +2460,7 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
           s.beam_end, s.beam_target, s.beam_t = to, st.target, t
           -- ((5.0) red while it fires - its firing step, or its salvo - amber while it is on its target but not firing yet)
           local firing = st.node == (s.def.fire_node or FIRE_NODE) or (s.def.salvo_node and st.node == s.def.salvo_node) or s.def.laser_when_firing
-          if firing then add_beam(beams, M, to, EXT.FIRE, on, s.id, st.target, e ~= nil) end
+          if firing then add_beam(beams, M, to, EXT.FIRE, on, s.id, st.target, e ~= nil, s.def.beam_inset) end
           -- ((5.0 Test 5) locked on: its icon over the enemy. (Test 8, the author: "not showing consistently") the whole
           -- time it is on that enemy, firing too, not only before it fires)
           if can_mark(s, st, c) then
