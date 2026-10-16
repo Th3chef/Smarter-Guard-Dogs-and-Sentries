@@ -369,7 +369,17 @@ end
 
 local function laser_fail(err)
   laser.state, laser.why = 'off', tostring(err)
-  laser.worlds = {}
+  -- ((5.1.2 review) the laser off after an error: what it drew last is taken off the screen first - a line object goes on
+  -- showing its last dispatch, so a ring or beam stayed until the game restarted. Each object once, emptied, in a
+  -- pcall of its own (they belong to worlds that were live last frame); the glow's retained triangles too)
+  local LO = SR and SR.LineObject
+  for _, objs in ipairs({ laser.worlds or {}, laser.ring_lo or {} }) do
+    for w, lo in pairs(objs) do
+      if LO then pcall(function() LO.reset(lo); LO.dispatch(w, lo) end) end
+    end
+  end
+  if laser.glow and laser.glow.clear then pcall(laser.glow.clear) end
+  laser.worlds, laser.ring_lo, laser.has, laser.ring_sig = {}, {}, false, nil
   note('laser: stopped after an error: ' .. laser.why)
   event('laser stopped: ' .. laser.why)
 end
@@ -625,6 +635,12 @@ end
 local function laser_clear()
   -- (4.6.3 review: only when something is on screen - before, every poll with nothing to show redrew empty line objects)
   if laser.state == 'ready' and laser.has and next(laser.worlds) then laser_draw({}) end
+end
+-- ((5.1.2) the mission ending: everything off the screen at once - the markers held up to MARK_HOLD s too, which an
+-- ordinary clear still draws for a moment)
+laser.clear_now = function()
+  laser.mark_last = {}
+  laser_clear()
 end
 -- (4.0.6) on the frames the mod doesn't look at the game (idle sentries, a few checks a second): the laser as it was
 do

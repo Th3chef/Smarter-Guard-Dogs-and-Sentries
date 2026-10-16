@@ -209,7 +209,16 @@ local function tick()
   end
   local status = st and 'active' or why
   -- ((4.6.4 review) out of a mission: forget the laser's per-world objects - see laser.forget)
-  if why == 'not in a mission' and (next(laser.worlds) or (laser.glow and next(laser.glow.guis))) then laser.forget() end
+  -- ((5.1.2, the author: make sure a ring isn't left on screen) but the game keeps its world through the extraction
+  -- (ship and later missions), and a line object goes on showing its last dispatch: a Tesla Tower still out, the
+  -- Rocket Sentry's ring on its lit half, or a dog's beam at that moment stayed on screen until the game restarted
+  -- (sims sentry_tesla_mission_end / sentry_rocket_mission_end). So on the poll the mission ends - the poll before was
+  -- in it, a fraction of a second ago, too soon for the world to be rebuilt - everything is cleared once first, and
+  -- only in the world it was drawn in (laser_draw only touches the objects kept for the world main_world() gives now)
+  if why == 'not in a mission' and (next(laser.worlds) or (laser.glow and next(laser.glow.guis))) then
+    if SGD.status ~= 'not in a mission' then laser.clear_now() end
+    laser.forget()
+  end
   local dogname = st and st.dog.name or nil
   if status ~= SGD.status then event('status: ' .. tostring(status)) end
   if dogname and dogname ~= SGD.dog then event('dog: ' .. dogname) end
@@ -275,7 +284,9 @@ local function tick()
   if sentries_busy then next_poll = 0 end
   -- the laser: the dog's beam and the sentries' beams, drawn together
   -- (4.6.3) in a pcall of its own: an error in the laser (it is only for show) stops the laser, not the steering
-  if laser_wanted() and laser_ready() then
+  -- ((5.1.2) nothing is drawn out of a mission: sentries still read as out there (the end of a mission, before their
+  -- units go) were drawn again into fresh objects, which the next poll forgot - on screen until the game restarted)
+  if laser_wanted() and laser_ready() and why ~= 'not in a mission' then
     local okl, errl = pcall(laser.step, st, sentries_out, t)
     if not okl then laser_fail(errl) end
   else laser_clear() end
