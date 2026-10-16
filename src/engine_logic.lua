@@ -516,7 +516,8 @@ function plan(st)
   for _, c in ipairs(st.candidates) do
     -- (every live one, not just those the dog rates worth shooting right now: it still picks those now and then)
     if c.alive or c.mask == '    ' or c.id == st.target then
-      if cannot_hurt(st.dog, c, st.drone_pos, st.dog.name) then N[c.id] = true
+      -- ((5.1 Test 1) with the game's aim point for its target: the part model follows the line to where it really aims)
+      if cannot_hurt(st.dog, c, st.drone_pos, st.dog.name, c.id == st.target and st.aim or nil) then N[c.id] = true
       -- (its current target gets a short grace while it is lining up, but none while it is firing: the moment an
       -- enemy it is shooting at drops out of sight it stops, the same as when its target dies)
       elseif COVER and not c.visible and (c.id ~= st.target or (c.memory or 0) <= COVER_GRACE or st.node == 7) then C[c.id] = true end
@@ -526,7 +527,9 @@ function plan(st)
   -- short bursts (Guard Dog vs Heavy Devastators): after a burst the enemy rests hidden for a while
   P.rest = P.rest or {}
   for _, c in ipairs(st.candidates) do
-    if P.rest[c.id] and t < P.rest[c.id] and (c.alive or c.mask == '    ' or c.id == st.target) then N[c.id] = true end
+    -- ((5.1.0 Test 1) a Heavy Devastator that has turned its back comes back at once: full auto)
+    if P.rest[c.id] and t < P.rest[c.id] and (c.alive or c.mask == '    ' or c.id == st.target)
+      and burst_only(st.dog, c, st.drone_pos, c.id == st.target and st.aim or nil) then N[c.id] = true end
   end
   for id, until_t in pairs(P.rest) do if t >= until_t then P.rest[id] = nil end end
   local S = {}
@@ -615,6 +618,7 @@ function plan(st)
     for _, c in ipairs(st.candidates) do if c.id ~= st.target and (c.eligible or c.mask == '    ') then focus[c.id] = true end end
   end
   local hide = union(U, F, N, C, R, S, focus)
+  st.hidden = hide   -- ((5.1.0 Test 1) for the dog's marker: none over a target the mod is taking away from it)
   if TESTER then st.hide_sets = { unsafe = U, closer_threat = F, armor = N, cover = C, range = R, no_shot = S, focus = focus } end   -- ((4.6.7 review) the F8 marker's only)
   -- a re-selection we asked for is still pending: keep the same enemies hidden until the target changes
   -- (4.6.4 review: not while its target has become unsafe - a hold for another reason must never delay a safety stop)
@@ -699,7 +703,7 @@ function plan(st)
   -- hidden, rather than asking the dog to choose again and again for nothing)
   if st.target ~= 0 and attacking and R[st.target] and not calm and in_range_alt then return dog_kick(st, t, hide, { [st.target] = true }, 'out_of_range') end
   if st.target ~= 0 and attacking and S[st.target] then return dog_kick(st, t, hide, { [st.target] = true }, 'no_shot') end
-  if current and st.node == 7 and P.fire >= BURST.fire and burst_only(st.dog, current) then
+  if current and st.node == 7 and P.fire >= BURST.fire and burst_only(st.dog, current, st.drone_pos, st.aim) then
     -- (the whole Devastator rests: its body and its shield are separate entries, rest_parts in engine_armor.lua)
     local parts = rest_parts(P.rest, st.candidates, current, t + BURST.rest)
     if TESTER and (P.burst_notes or 0) < 12 then
