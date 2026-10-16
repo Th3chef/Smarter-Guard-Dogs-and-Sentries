@@ -1,5 +1,9 @@
 # Changelog
 
+## 5.1.1
+
+- The laser on the Supply FRV gun and the Armed Resupply Pod gun now starts at the tip of the barrel instead of a little in front of it.
+
 ## 5.1.0
 
 - Part armor for nearly every armored enemy: Impalers, Bile Titans, Dragonroaches, tanks and their turrets, emplacements and Bunker Turrets, Factory Striders, the Vox Engine, War Striders, Scout Striders, Harvesters, Gatekeepers and Veracitors are judged by the part each gun is aiming at (heatsinks, bellies, rears, weak spots), as Hulks and Chargers were.

@@ -77,7 +77,7 @@ Get the latest zip from the [Releases](../../releases/latest) page (the `Smarter
 ## Install / update
 1. Install Bingus Shared Loader v19 or newer.
 2. Remove any older version of Smarter Guard Dogs (& Sentries).
-3. Add Smarter-Guard-Dogs-and-Sentries-5.1.0.zip in Arsenal or the HD2 Mod Manager and check the options you want (updating: check the new Marker Size option, and pick Red while firing or Green while firing under Targeting Laser).
+3. Add Smarter-Guard-Dogs-and-Sentries-5.1.1.zip in Arsenal or the HD2 Mod Manager and check the options you want (updating: check the new Marker Size option, and pick Red while firing or Green while firing under Targeting Laser).
 4. Purge, then Deploy (always both, every time you install or update), then restart the game.
 
 ## Uninstall
