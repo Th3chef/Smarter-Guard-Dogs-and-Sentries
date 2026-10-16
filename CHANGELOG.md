@@ -1,5 +1,14 @@
 # Changelog
 
+## 5.1.0
+
+- Part armor for nearly every armored enemy: Impalers, Bile Titans, Dragonroaches, tanks and their turrets, emplacements and Bunker Turrets, Factory Striders, the Vox Engine, War Striders, Scout Striders, Harvesters, Gatekeepers and Veracitors are judged by the part each gun is aiming at (heatsinks, bellies, rears, weak spots), as Hulks and Chargers were.
+- Heavy Devastators: nothing holds fire on them. The Guard Dog and the Machine Gun and Gatling sentries fire short bursts while the shield is in the way and full auto when its back is turned; the Rover keeps burning them.
+- Sharper target markers, traced from the game's stratagem icons, and a new Marker Size option (50% to 200%). The dog's marker only shows on a target it keeps, instead of flicking to enemies it can't reach.
+- Targeting Laser: choose Red while firing (the default) or Green while firing (the colors before 5.0). The Line choice is gone; the glow beam is used.
+- Better enemy identification: Rocket Devastators no longer get short bursts, the Factory Strider's gatlings and the Vox Engine's miniguns are judged by their real armor (Medium), and more tank, Factory Strider, Harvester and Scout Strider variants are recognized.
+- Fixes and speed-ups from the release review: a Harvester seen while warping in is looked at again, less work and memory per frame for part armor and the markers, and the in-game menu keeps your laser choice straight after the update.
+
 ## 5.0.0
 
 - Part armor (Armor Intelligence): dogs and sentries judge a Hulk or Charger by the part they're aiming at, so they fire on a Hulk's heatsink and a Charger's rear or underside and still leave the armored front alone. If the part can't be worked out, the whole-enemy armor rule is used as before.
