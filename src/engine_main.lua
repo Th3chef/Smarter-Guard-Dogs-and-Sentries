@@ -25,6 +25,7 @@ local menu_step = (function()
   -- normal brightness, the same as 'Normal (100%)')
   local BRIGHT = { 0.5, 0.75, 1.0, 1.5, 2.0 }
   local OPAC = { 0.25, 0.5, 0.75, 1.0 }   -- ((5.0 Test 15) Marker Opacity)
+  local SIZE = { 0.5, 0.75, 1.0, 1.5, 2.0 }   -- ((5.1.0 Test 1) Marker Size, smallest first)
   -- each row, in the mod manager's order: its choices, which flags each sets, and the starting choice from the flags
   local OPTS = {
     { key = 'dogs', label = 'Guard Dogs', type = 'toggle',
@@ -36,7 +37,7 @@ local menu_step = (function()
       start = function() return not flag('Sentries') and 1 or (flag('Tesla') and 2 or 3) end },
     { key = 'intelligence', label = 'Intelligence', type = 'choice',
       choices = { 'Off', 'Armor Intelligence and Target Prioritization', 'Only Armor Intelligence', 'Only Target Prioritization' },
-      description = 'How your dogs and sentries choose what to shoot. Armor Intelligence: they skip armor they can\'t hurt (Hulks and Chargers by the part they aim at), fire short bursts at Heavy Devastators and leave dropships alone. Target Prioritization: your dog takes the closest threat to you first; your sentries take enemies at their feet, Gunships and the right armor first. Turn off to leave both to the game.',
+      description = 'How your dogs and sentries choose what to shoot. Armor Intelligence: they shoot armor only at parts they can hurt, burst at a Heavy Devastator\'s shield and leave dropships alone. Target Prioritization: your dog takes the closest threat to you first; your sentries take enemies at their feet, Gunships and the right armor first. Turn off to leave both to the game.',
       apply = function(v) set('Armor', v == 2 or v == 3); set('Priority', v == 2 or v == 4) end,
       start = function() local a, p = flag('Armor'), flag('Priority'); return (a and p) and 2 or (a and 3) or (p and 4) or 1 end },
     -- (5.0) Ping Targeting: its own on/off row, after Intelligence
@@ -55,13 +56,15 @@ local menu_step = (function()
     { key = 'seaf_safety', label = 'SEAF Safety', type = 'toggle',
       description = 'Your guard dog and your sentries don\'t shoot through SEAF soldiers or civilians: they hold fire while one is in their line of fire, don\'t swing their fire across one, and the mortars, the Tesla Tower and the rocket, autocannon and flame sentries leave alone enemies right next to one. Turn off to let them fire through SEAF soldiers and civilians. Everything else keeps working.',
       apply = function(v) set('SEAFSafety', v) end, start = function() return flag('SEAFSafety') end },
-    { key = 'laser', label = 'Targeting Laser', type = 'choice', choices = { 'Off', 'Line', 'Glow' },
-      description = 'A laser from the barrel of your guard dog and your sentries (not the mortars), only on your screen: red while they fire, flashing green when a friendly is in the way. The Tesla Tower shows its reach as a red ring. Glow: a soft beam that shows through walls, like the markers. Line: thin, hidden by walls.',
-      apply = function(v) set('Laser', v ~= 1); set('Glow', v == 3) end,
-      start = function() return not flag('Laser') and 1 or (flag('Glow') and 3 or 2) end },
+    -- ((5.1.0 Test 1, the author: "You can remove the line option") the glow in two color schemes, as in the mod manager)
+    -- ((release review) a new key: the old 'laser' row's saved choice numbers meant Line / Glow)
+    { key = 'laser_color', label = 'Targeting Laser', type = 'choice', choices = { 'Off', 'Red while firing', 'Green while firing' },
+      description = 'A soft glowing laser from the barrel of your guard dog and your sentries (not the mortars), only on your screen, showing through walls like the markers. Red while firing: red while they fire, flashing green when a friendly is in the way. Green while firing: the other way round. The Tesla Tower shows its reach as a red ring.',
+      apply = function(v) set('Laser', v ~= 1); set('Glow', v ~= 1); set('LaserInvert', v == 3) end,
+      start = function() return not flag('Laser') and 1 or (flag('LaserInvert') and 3 or 2) end },
     { key = 'laser_brightness', label = 'Laser Brightness', type = 'choice',
       choices = { 'Dim (50%)', 'Softer (75%)', 'Normal (100%)', 'Bright (150%)', 'Brightest (200%)' },
-      description = 'How bright the targeting laser is: its beams and rings, line or glow.',
+      description = 'How bright the targeting laser is: its beams and rings.',
       apply = function(v) if BRIGHT[v] then rawset(_G, 'SmarterGuardDogsLaserBrightness', BRIGHT[v]) end end,
       start = function()
         local b = rawget(_G, 'SmarterGuardDogsLaserBrightness')
@@ -84,6 +87,18 @@ local menu_step = (function()
         if type(o) ~= 'number' then return 4 end
         local best, bd = 4, nil
         for i, x in ipairs(OPAC) do if not bd or math.abs(x - o) < bd then best, bd = i, math.abs(x - o) end end
+        return best
+      end },
+    -- (5.1.0 Test 1) Marker Size: how big the markers are (smallest first)
+    { key = 'marker_size', label = 'Marker Size', type = 'choice',
+      choices = { 'Smallest (50%)', 'Small (75%)', 'Normal (100%)', 'Large (150%)', 'Largest (200%)' },
+      description = 'How big the targeting markers are drawn. Normal is how they are designed.',
+      apply = function(v) if SIZE[v] then rawset(_G, 'SmarterGuardDogsMarkerSize', SIZE[v]) end end,
+      start = function()
+        local o = rawget(_G, 'SmarterGuardDogsMarkerSize')
+        if type(o) ~= 'number' then return 3 end
+        local best, bd = 3, nil
+        for i, x in ipairs(SIZE) do if not bd or math.abs(x - o) < bd then best, bd = i, math.abs(x - o) end end
         return best
       end },
   }
@@ -117,6 +132,7 @@ end)()
 
 -- (4.6.3) this frame's laser: the dog's beam and the sentries' beams, drawn together (called in a pcall from tick)
 laser.step = function(st, sentries_out, t)
+  laser.inv = laser.inverted()   -- ((5.1.0 release review) the Targeting Laser color choice, once a frame)
   laser.me = (st and st.player_pos) or EXT.me   -- ((5.0) beams fade with their distance from you)
   local beams = {}
   laser.dog_target = false

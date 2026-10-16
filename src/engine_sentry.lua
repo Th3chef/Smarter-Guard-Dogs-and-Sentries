@@ -9,7 +9,7 @@
 -- ======================================================================================================
 -- (4.6.3) outside helpers the sentry code uses only now and then, in one table: the function below may only
 -- reach 60 outside variables (LuaJIT), and this keeps plenty of room for new ones
-local EXT = { PERC = PERC, teammates = teammates, GROUPS = GROUPS, SINGLES = SINGLES, find_player = find_player, read_candidates = read_candidates, in_mission = in_mission, laser_wanted = laser_wanted, RED_SECONDS = RED_SECONDS, FRIEND = FRIEND, FIRE = FIRE, FLASH_HZ = FLASH_HZ, cannot_hurt = cannot_hurt, rest_parts = rest_parts, hexr = hexr, is_local = is_local, team_wanted = team_wanted, hider_apply = hider_apply, loss_cut = loss_cut, type_hash = type_hash, LOCK = LOCK, LOST = LOST, me = nil, SGD = SGD }
+local EXT = { PERC = PERC, teammates = teammates, GROUPS = GROUPS, SINGLES = SINGLES, find_player = find_player, read_candidates = read_candidates, in_mission = in_mission, laser_wanted = laser_wanted, RED_SECONDS = RED_SECONDS, FRIEND = FRIEND, FIRE = FIRE, FLASH_HZ = FLASH_HZ, cannot_hurt = cannot_hurt, rest_parts = rest_parts, parts_exposed = PARTS.exposed, hexr = hexr, is_local = is_local, team_wanted = team_wanted, hider_apply = hider_apply, loss_cut = loss_cut, type_hash = type_hash, LOCK = LOCK, LOST = LOST, me = nil, SGD = SGD }
 -- (built inside a function of its own: its many helpers would not fit among the main chunk's locals)
 local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
   local sentry_tick, sentry_restore, sentry_beams, sentry_after
@@ -1453,7 +1453,11 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
       -- (4.6.3 review: set once per burst - while it stayed on the enemy after the burst, the rest was pushed back every frame)
       -- (4.6.4 review: and not again while it is still resting - burst_now is cleared when it is dropped, and a gun with
       -- nothing else to pick stays on it, which pushed the rest back every frame all the same)
-      if a and a.burst and P.on_fire >= BURST_S.fire and P.burst_now ~= target and not (P.rest[target] and t < P.rest[target]) then
+      -- ((5.1.0 Test 1, the author: short bursts "to keep them surpressed and then if its turned around it should go full
+      -- auto") no rest while its line meets the Heavy Devastator's body instead of its shield)
+      local open_body = false
+      if a and a.burst then local ok, r = pcall(EXT.parts_exposed, s.def, c, st.muzzle, s.id, st.aim); open_body = ok and r end
+      if a and a.burst and not open_body and P.on_fire >= BURST_S.fire and P.burst_now ~= target and not (P.rest[target] and t < P.rest[target]) then
         EXT.rest_parts(P.rest, cands, c, t + BURST_S.rest); P.burst_now = target
       end
     end
@@ -1506,7 +1510,11 @@ local sentry_tick, sentry_restore, sentry_beams, sentry_after = (function()
         if sight and not c.visible and (id ~= target or firing or (c.memory or 0) <= COVER_S.grace) and not (P.sight_ok[id] and t < P.sight_ok[id]) then O = put(O, id) end
         if cooling then C = put(C, id) end
         if range2 and c.d2 and c.d2 > (id == target and keep_range2 or range2) then RG = put(RG, id) end
-        if bursts and P.rest[id] and t < P.rest[id] then B = put(B, id) end
+        -- ((5.1.0 Test 1) a rested Heavy Devastator whose back is turned to this sentry comes back at once: full auto)
+        if bursts and P.rest[id] and t < P.rest[id] then
+          local ok, r = pcall(EXT.parts_exposed, s.def, c, st.muzzle, s.id, st.current == c and st.aim or nil)
+          if not (ok and r) then B = put(B, id) end
+        end
       end
       -- (Tesla Tower) a helldiver in its list - you, or a teammate with Teammate safety on - is hidden from it
       -- (any helldiver with Teammate safety on; otherwise one within 6 m of you: the list's positions lag behind a

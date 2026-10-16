@@ -17,6 +17,9 @@ local RED_SECONDS = 0.6         -- how long the red warning stays up after the s
 -- (5.0) the beam's meaning (each table is the key the drawing looks its look up by; alpha, red, green, blue)
 local FIRE = { 255, 220, 16, 12 }     -- firing at an enemy: red
 local FRIEND = { 255, 0, 200, 20 }    -- held off an enemy because a friendly is in the way: green (flashing)
+-- ((5.1.0 Test 1, the author: "make the laser inversion an option. Put it back to how I had it, and make it an option I can
+-- change" - "suboptions under targeting laser") the '... green while firing' choices under Targeting Laser set this flag:
+-- firing green and the safety's flashing beam red, as before 5.0. The tables above stay the keys; only the look swaps)
 local LOST = { 255, 150, 150, 150 }   -- a shot stopped because the target went out of sight (cover or smoke): gray
 local LOCK = { 255, 230, 140, 0 }     -- locked on, not firing yet (lining up, turning onto it): amber
 local LASER_RISE = 0.0               -- meters above the drone's center where the beam starts
@@ -46,6 +49,7 @@ end
 -- ((5.0 Test 9) how far into the enemy a beam fixed on a barrel runs past the point nearest its centre: the line is
 -- depth-tested, so its visible end is where it meets the enemy's body)
 laser.INTO = 0.4
+laser.MARK_SETTLE = 0.25   -- ((5.1.0 Test 1) seconds a dog keeps a target before its marker shows over it
 -- (4.5.3) Laser Brightness (the option's sub-options, or Bingus' Mod Options Menu): a multiplier on every beam's and ring's
 -- color - the lines' red, green and blue (the engine ignores their transparency), the glow's transparency. 1 = as
 -- before; read every frame
@@ -56,6 +60,14 @@ laser.marker_opacity = function()
   if type(o) ~= 'number' or o ~= o then return 1 end
   return math.max(0.1, math.min(1, o))
 end
+-- (5.1.0 Test 1, the author: "Add an option in the options menu to adjust the size of the targeting marker") the Marker
+-- Size option (its sub-options, or the Mod Options Menu): a multiplier on the markers' size. 1 = as designed
+laser.marker_size = function()
+  local o = rawget(_G, 'SmarterGuardDogsMarkerSize')
+  if type(o) ~= 'number' or o ~= o then return 1 end
+  return math.max(0.25, math.min(3, o))
+end
+laser.inverted = function() return rawget(_G, 'SmarterGuardDogsLaserInvert') == true end
 laser.brightness = function()
   local b = rawget(_G, 'SmarterGuardDogsLaserBrightness')
   if type(b) ~= 'number' or b ~= b then return 1 end
@@ -115,6 +127,8 @@ do
     [FIRE] = look(FIRE, 0.9), [FRIEND] = look(FRIEND, 0.9),
     [LOST] = look(LOST, 0.8), [LOCK] = look(LOCK, 1),
   }
+  -- ((5.1.0 Test 1) the swapped colors: firing in the safety's green, the safety's beam in the firing red)
+  local STYLE_INV = { [FIRE] = STYLE[FRIEND], [FRIEND] = STYLE[FIRE], [LOST] = STYLE[LOST], [LOCK] = STYLE[LOCK] }
   -- the icons (icon_data.lua), unpacked once: per icon its glyph and body as flat lists of (height, left, right),
   -- the height 0..1 from the bottom and the sides -0.5..0.5 across
   local ICONS = {}
@@ -131,9 +145,37 @@ do
       end
       return out
     end
+    -- ((5.1.0 Test 1, the author: "clean up the marker a bit, its kind of low-resolution") the icons as filled shapes
+    -- (tools/icons_vec.py): triangles traced from the 256-pixel HUD icons, smooth edges at any size, and a rounded dark
+    -- edge. Each triangle six numbers (across, up), turned counterclockwise as the band quads are)
+    local vval = {}
+    if ICON_DATA.vabc then for k = 1, #ICON_DATA.vabc do vval[ICON_DATA.vabc:sub(k, k)] = k - 1 end end
+    -- ((5.1.0 release review) each corner once - the triangles share most of them - and the triangles as three corner
+    -- numbers: { v = { across, up, ... }, i = { corner, corner, corner, ... } })
+    local function unpack_tris(str)
+      if not str then return nil end
+      local v, idx, at = {}, {}, {}
+      local function corner(k)
+        local key = str:sub(k, k + 3)
+        local n = at[key]
+        if not n then
+          n = #v / 2 + 1; at[key] = n
+          v[#v + 1] = (vval[str:sub(k, k)] * 64 + vval[str:sub(k + 1, k + 1)]) / 4095 - 0.5
+          v[#v + 1] = (vval[str:sub(k + 2, k + 2)] * 64 + vval[str:sub(k + 3, k + 3)]) / 4095
+        end
+        return n
+      end
+      for k = 1, #str - 11, 12 do
+        local a, b, c = corner(k), corner(k + 4), corner(k + 8)
+        local ax, ay, bx, by, cx, cy = v[a * 2 - 1], v[a * 2], v[b * 2 - 1], v[b * 2], v[c * 2 - 1], v[c * 2]
+        if (bx - ax) * (cy - ay) - (by - ay) * (cx - ax) < 0 then b, c = c, b end
+        idx[#idx + 1] = a; idx[#idx + 1] = b; idx[#idx + 1] = c
+      end
+      return { v = v, i = idx }
+    end
     for name, d in pairs(ICON_DATA) do
       if type(d) == 'table' then
-        local ic = { g = unpack_runs(d.g), b = unpack_runs(d.b), rows = R }
+        local ic = { g = unpack_runs(d.g), b = unpack_runs(d.b), rows = R, tg = unpack_tris(d.tg), tb = unpack_tris(d.tb), te = unpack_tris(d.te) }
         -- ((5.0 Test 8) per band, its leftmost to rightmost run: the dark edge behind the GUI marker, one quad a band)
         local span, sh = {}, {}
         for _, L in ipairs({ ic.g, ic.b }) do
@@ -201,7 +243,7 @@ do
         if ul > 1e-3 then ux, uy, uz = ux / ul, uy / ul, uz / ul else ux, uy, uz = 0, 0, 1 end
       end
     end
-    local sz = math.min(BEAM.icon_max, math.max(BEAM.icon_min, dist * BEAM.icon_per_m))
+    local sz = math.min(BEAM.icon_max, math.max(BEAM.icon_min, dist * BEAM.icon_per_m)) * laser.marker_size()
     local n = b.slots or 1
     if n > 1 then
       local o = ((b.slot or 1) - (n + 1) / 2) * sz * 1.1
@@ -230,7 +272,7 @@ do
   -- adds one styled beam (or marker) as lines: line(color, fade, x1, y1, z1, x2, y2, z2) draws one line in a color dimmed
   -- by 'fade'. A beam: its strands, a small cross on the target, the star at the gun, and the core last, on top
   laser.draw_styled = function(b, line)
-    local S = STYLE[b.argb]
+    local S = (laser.inv and STYLE_INV or STYLE)[b.argb]   -- ((release review) laser.inv: read once a frame, laser.step)
     if b.marker then return marker(b, S, line) end
     local f, t = b.from, b.to
     local dx, dy, dz = t[1] - f[1], t[2] - f[2], t[3] - f[3]
@@ -627,6 +669,7 @@ do
     end
     LOOKS[base] = S
   end
+  local LOOKS_INV = { [FIRE] = LOOKS[FRIEND], [FRIEND] = LOOKS[FIRE], [LOST] = LOOKS[LOST], [LOCK] = LOOKS[LOCK] }   -- ((5.1.0 Test 1) swapped)
 
   local function off(why)
     G.off = true
@@ -733,6 +776,7 @@ do
     -- review) one function for every marker, reading the marker being drawn from these locals - not one made per marker)
     local x, y, z, rx, ry, ux, uy, uz
     local function P(a, h) return V(x + rx * a + ux * h, y + ry * a + uy * h, z + uz * h) end
+    local PV = G.pv or {}; G.pv = PV   -- ((5.1.0 release review) a marker's corners, reused)
     for _, b in ipairs(beams) do
       local M = b.marker and MARK[b.argb]
       if M then
@@ -741,6 +785,16 @@ do
         local hb = sz / ic.rows * 0.5 + 0.0005   -- (half a band, a hair over so the bands meet)
         local base = cw + sz * 0.1
         local e = sz * 0.05                      -- (the dark edge's width)
+        if ic.tg then
+          -- ((5.1.0 Test 1) the traced shapes: edge, body, glyph; (release review) each corner placed once, PV reused)
+          for pass = 1, 3 do
+            local T = pass == 1 and ic.te or pass == 2 and ic.tb or ic.tg
+            local col = pass == 1 and M.edge or pass == 2 and M.body or M.glyph
+            local v, I = T.v, T.i
+            for k = 1, #v, 2 do PV[(k + 1) / 2] = P(v[k] * sz, base + v[k + 1] * sz) end
+            for k = 1, #I, 3 do tri(PV[I[k]], PV[I[k + 1]], PV[I[k + 2]], col) end
+          end
+        else
         for pass = 1, 3 do
           local L = pass == 1 and ic.sh or pass == 2 and ic.b or ic.g
           local col = pass == 1 and M.edge or pass == 2 and M.body or M.glyph
@@ -751,6 +805,7 @@ do
             local p3, p4 = P(c, h + hb + ex), P(a, h + hb + ex)
             tri(p1, p2, p3, col); tri(p1, p3, p4, col)
           end
+        end
         end
         -- the chevron: two short bars meeting at the point
         for pass = 1, 2 do
@@ -765,7 +820,7 @@ do
       end
     end
     for _, b in ipairs(beams) do
-      local S = glow and not b.marker and laser.styled(b) and LOOKS[b.argb]
+      local S = glow and not b.marker and laser.styled(b) and (laser.inv and LOOKS_INV or LOOKS)[b.argb]
       local f, e = b.from, b.to
       local dx, dy, dz = e[1] - f[1], e[2] - f[2], e[3] - f[3]
       local len = S and sqrt(dx * dx + dy * dy + dz * dz) or 0
@@ -1102,7 +1157,7 @@ local function laser_frame(st, beams, safety_t, safety_enemy, safety_step, cover
   local function can_mark(c)
     local r = st.dog.range
     if r and not (c.d2 and c.d2 <= r * r) then return false end
-    return not (laser.cannot_hurt and laser.cannot_hurt(st.dog, c, st.drone_pos, st.dog.name))
+    return not (laser.cannot_hurt and laser.cannot_hurt(st.dog, c, st.drone_pos, st.dog.name, c.id == st.target and st.aim or nil))
   end
   local function mark(to, argb, c)
     if c and not can_mark(c) then return end
@@ -1183,7 +1238,13 @@ local function laser_frame(st, beams, safety_t, safety_enemy, safety_step, cover
   local Dp, Pp = st.drone_pos, st.player_pos
   local docked = Dp and Pp and ((Dp[1] - Pp[1]) ^ 2 + (Dp[2] - Pp[2]) ^ 2) < 1.2 ^ 2   -- (on your back, reloading)
   laser.dog_target = st.target ~= 0 and not docked   -- (the test builds' marker count)
-  if st.target ~= 0 and not docked then
+  -- ((5.1.0 Test 1, the author: "the marker with the guard dog rover and guard dog would constantly flick around to
+  -- enemies it cant reach still") not over a target the mod is hiding from it this frame (out of range, a friendly in
+  -- the way, out of sight, no shot, armor it can't hurt): the game kept picking those and the mod kept taking them away,
+  -- so the icon jumped between them. And only once it has kept the same target for MARK_SETTLE seconds
+  if st.target ~= laser.dog_mark_tg then laser.dog_mark_tg, laser.dog_mark_t = st.target, t end
+  local H = st.hidden
+  if st.target ~= 0 and not docked and not (H and H[st.target]) and t - laser.dog_mark_t >= laser.MARK_SETTLE then
     local e = by_id(st.target)
     if e and e.pos then mark(spot(e), LOCK, e) end
   end
