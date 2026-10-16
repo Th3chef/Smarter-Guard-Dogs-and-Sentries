@@ -1,5 +1,9 @@
 # Changelog
 
+## 5.1.2
+
+- Nothing the mod draws is left on screen when a mission ends: extracting with a Tesla Tower still standing (or with the Rocket Sentry's ring or a dog's laser showing at that moment) could leave the ring or laser on screen on the ship and in later missions until the game was restarted. The same is now true if the laser ever stops after an error.
+
 ## 5.1.1
 
 - The laser on the Supply FRV gun and the Armed Resupply Pod gun now starts at the tip of the barrel instead of a little in front of it.
