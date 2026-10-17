@@ -1,5 +1,13 @@
 # Changelog
 
+## 5.1.3
+
+- Armor Intelligence now knows 19 enemy kinds it was missing, so they no longer count as unarmored: the Jet Brigade and other Hulk variants, Charger Behemoth, Heavy Devastator, Devastator and Rocket Devastator variants, dropship, cannon turrets, Leviathan cannon turrets and the Reinforced Scout Strider's rocket racks. The Machine Gun Sentry no longer tries to kill a Jet Brigade Hulk by shooting its head; it goes for the heatsink.
+- Targeting Marker: new *Behind walls* choice, where walls and objects hide the markers (drawn solid, so Marker Opacity doesn't change them). *Through walls* stays the default.
+- Targeting Laser: choose the *Glow* beam (the default) or the thin *Line* again, which walls hide. The colors moved to the new Laser Color option: *Red while firing* (the default) or *Green while firing*, for either one.
+- New icons for the Marker Opacity and Marker Size options.
+- Updating: check Targeting Laser, Laser Color and Targeting Marker in your mod manager. If you used Green while firing, pick Glow under Targeting Laser and Green while firing under Laser Color.
+
 ## 5.1.2
 
 - Nothing the mod draws is left on screen when a mission ends: extracting with a Tesla Tower still standing (or with the Rocket Sentry's ring or a dog's laser showing at that moment) could leave the ring or laser on screen on the ship and in later missions until the game was restarted. The same is now true if the laser ever stops after an error.
