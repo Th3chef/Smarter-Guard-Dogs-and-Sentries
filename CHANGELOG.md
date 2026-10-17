@@ -1,5 +1,10 @@
 # Changelog
 
+## 5.1.4
+
+- Better performance: the targeting markers and the Glow laser are drawn with about half as many triangles (they look the same), and during a mission the log is rewritten at most once a minute instead of every 15 seconds (each rewrite was a short hitch).
+- Behind walls markers: all of them together get a fixed number of lines a frame, so a crowd of markers no longer costs more and more. A single close marker stays fully filled; several at once are drawn with fewer rows.
+
 ## 5.1.3
 
 - Armor Intelligence now knows 19 enemy kinds it was missing, so they no longer count as unarmored: the Jet Brigade and other Hulk variants, Charger Behemoth, Heavy Devastator, Devastator and Rocket Devastator variants, dropship, cannon turrets, Leviathan cannon turrets and the Reinforced Scout Strider's rocket racks. The Machine Gun Sentry no longer tries to kill a Jet Brigade Hulk by shooting its head; it goes for the heatsink.
