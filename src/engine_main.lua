@@ -1,8 +1,8 @@
 -- ======================================================================================================
 -- Main loop
 -- ======================================================================================================
-local next_poll, next_log, last_log, broken = 0, 0, 0, false
-local LOG_EVERY = { idle = 60, changed = 15 }   -- (4.6.7) seconds between log rewrites: at most / after a change
+local next_poll, last_log, broken = 0, 0, false
+local LOG_EVERY = { idle = 60, changed = 15 }   -- (4.6.7) seconds between log rewrites: in a mission / out of one (5.1.4)
 local read_fail_since           -- (4.6.6 review) when the dog's reads started failing (nil: they work)
 local last_poll_t
 local sentry_broken, sentry_last_error = false, nil
@@ -144,6 +144,7 @@ end)()
 laser.step = function(st, sentries_out, t)
   laser.inv = laser.inverted()   -- ((5.1.0 release review) the Targeting Laser color choice, once a frame)
   laser.walls = rawget(_G, 'SmarterGuardDogsMarkerWalls') == true   -- ((5.1.3) Targeting Marker: Behind walls
+  laser.mark_lines = 0   -- ((5.1.4) the Behind walls markers' line budget, this frame's
   -- (the markers drawn as lines - Behind walls, or a game build with no world GUI: their icons cut ahead, one a frame)
   -- ((release review) only while the markers are on, and no more once every icon is cut)
   if not laser.markers_warm and rawget(_G, 'SmarterGuardDogsMarker') == true
@@ -185,7 +186,16 @@ local function tick()
   -- ((4.6.7, a player reported a performance cost) each rewrite took ~3.3 ms on the game thread in a Test 3 log (every
   -- one over 1 ms - the mod's only frame spikes; everything else ~0.15 ms a frame): now every 60 s, and a change within
   -- 15 s (was every 10 s and within 3 s). Errors and shutdown still write at once)
-  if t >= next_log or (session.dirty and t - last_log >= LOG_EVERY.changed) then next_log, last_log = t + LOG_EVERY.idle, t; pcall(write_log) end   -- ((4.6.6 review) in a pcall: a log error stopped the whole mod)
+  -- ((5.1.4, players: "the performance is much worse"; a 5.1.3 Tester log: 19 rewrites at ~3.2 ms each, the mod's only
+  -- frame spikes) in a mission only once a minute and only with something new; when the mission ends, at once; out of
+  -- a mission within 15 s of a change. Nothing new, no rewrite. Errors and shutdown still write at once
+  local in_mission = SGD.status ~= 'not in a mission'
+  if in_mission then SGD.log_mission = true end
+  if not in_mission and SGD.log_mission then
+    SGD.log_mission = false; last_log = t; pcall(write_log)   -- (the mission's totals, as it ends)
+  elseif session.dirty and t - last_log >= (in_mission and LOG_EVERY.idle or LOG_EVERY.changed) then
+    last_log = t; pcall(write_log)   -- ((4.6.6 review) in a pcall: a log error stopped the whole mod)
+  end
   -- (test builds: F8 also works while no dog is out, e.g. right after you died; checked every frame so a quick
   -- press isn't missed between the slower polls)
   if TESTER and SGD.status ~= 'active' then pcall(check_marker, nil) end
