@@ -254,9 +254,132 @@ do
   end
   -- the marker as lines (when the game build has no world GUI): line(color, fade, ...) as for the beams. The gun's icon
   -- stands upright facing you, about 30 pixels tall at any distance; a small chevron under it points at the enemy
+  -- ((5.1.3, the author: "being able to hide the markers ... behind walls") the game's lines are the only drawing
+  -- walls hide (the world GUI can't be depth tested from a mod), so Behind walls draws the marker with them: the traced
+  -- icon (edge, body, glyph) cut into rows, one line per row and color - lines a pixel or so apart, so it reads as filled
+  -- - with a row's pieces never overlapping (lines in one plane would fight). Each icon is cut once into 96 rows
+  -- (0.3-1.8 ms; warmed one icon a frame while Behind walls is on, see laser.warm_markers); smaller markers take every
+  -- 2nd, 3rd or 4th row (48, 32, 24 rows), about one row per pixel of the marker's height on screen
+  local BASE_ROWS = 96
+  local SCAN, CUT = {}, {}
+  local function by_start(p, q) return p[1] < q[1] end
+  local function cut_icon(ic)
+    local base = CUT[ic]
+    if base then return base end
+    base = {}
+    local layers = { ic.te, ic.tb, ic.tg }
+    for r = 1, BASE_ROWS do
+      local y = (r - 0.5) / BASE_ROWS
+      local iv = {}
+      for L = 1, 3 do
+        local v, I = layers[L].v, layers[L].i
+        local list = {}
+        for k = 1, #I, 3 do
+          local lo, hi
+          for e = 0, 2 do
+            local p, q = I[k + e], I[k + (e + 1) % 3]
+            local px, py, qx, qy = v[p * 2 - 1], v[p * 2], v[q * 2 - 1], v[q * 2]
+            if (py <= y and qy > y) or (qy <= y and py > y) then
+              local x = px + (y - py) * (qx - px) / (qy - py)
+              if not lo or x < lo then lo = x end
+              if not hi or x > hi then hi = x end
+            end
+          end
+          if lo and hi > lo then list[#list + 1] = { lo, hi } end
+        end
+        table.sort(list, by_start)
+        local merged = {}
+        for _, sg in ipairs(list) do
+          local m = merged[#merged]
+          if m and sg[1] <= m[2] + 1e-4 then if sg[2] > m[2] then m[2] = sg[2] end else merged[#merged + 1] = { sg[1], sg[2] } end
+        end
+        iv[L] = merged
+      end
+      -- the glyph on top, then the body outside it, then the edge outside both: { across from, across to, layer, ... }
+      local row, covered = {}, {}
+      for L = 3, 1, -1 do
+        for _, sg in ipairs(iv[L]) do
+          local pieces = { { sg[1], sg[2] } }
+          for _, c in ipairs(covered) do
+            local np = {}
+            for _, pc in ipairs(pieces) do
+              if c[2] <= pc[1] or c[1] >= pc[2] then np[#np + 1] = pc
+              else
+                if c[1] > pc[1] then np[#np + 1] = { pc[1], c[1] } end
+                if c[2] < pc[2] then np[#np + 1] = { c[2], pc[2] } end
+              end
+            end
+            pieces = np
+          end
+          for _, pc in ipairs(pieces) do
+            if pc[2] - pc[1] > 1e-4 then row[#row + 1] = pc[1]; row[#row + 1] = pc[2]; row[#row + 1] = L end
+          end
+        end
+        for _, sg in ipairs(iv[L]) do covered[#covered + 1] = sg end
+      end
+      base[r] = row
+    end
+    CUT[ic] = base
+    return base
+  end
+  -- an icon in 'rows' rows (24, 32, 48 or 96): a flat list { up, across from, across to, layer, ... }
+  local function scan_icon(ic, rows)
+    local byrows = SCAN[ic]
+    if not byrows then byrows = {}; SCAN[ic] = byrows end
+    local out = byrows[rows]
+    if out then return out end
+    local base, k = cut_icon(ic), BASE_ROWS / rows
+    out = {}
+    for r = 1, rows do
+      local row = base[(r - 1) * k + math.floor(k / 2) + 1]
+      local y = (r - 0.5) / rows
+      for j = 1, #row, 3 do out[#out + 1] = y; out[#out + 1] = row[j]; out[#out + 1] = row[j + 1]; out[#out + 1] = row[j + 2] end
+    end
+    byrows[rows] = out
+    return out
+  end
+  -- (while Behind walls is on) one icon not cut yet, cut this frame: all of them ready in a dozen frames, before most
+  -- markers are first needed - no frame cuts more than one unless a marker needs its icon at once
+  laser.warm_markers = function()
+    for _, ic in pairs(ICONS) do
+      if ic.tg and not CUT[ic] then cut_icon(ic); return end
+    end
+    laser.markers_warm = true   -- ((release review) all cut: laser.step stops calling this
+  end
+  -- the solid colors (alpha ignored by the lines): the GUI marker's glyph and body; its see-through black edge as a dark shade
+  local LMARK = {
+    [LOCK] = { { 255, 40, 32, 8 }, { 255, 255, 214, 60 }, { 255, 255, 248, 170 } },
+    [LOST] = { { 255, 40, 40, 40 }, { 255, 214, 214, 214 }, { 255, 250, 250, 250 } },
+  }
   local function marker(b, S, line)
     local fd = b.fade or 1
     local ic, x, y, z, rx, ry, sz, cw, ux, uy, uz = laser.marker_geom(b)
+    local C = LMARK[b.argb]
+    if ic.tg and C then
+      -- (the marker's own colors, not dimmed with distance or by Laser Brightness: the brightness is undone here)
+      fd = 1 / laser.brightness()
+      local me, t = laser.me, b.to
+      local dist = me and sqrt((t[1] - me[1]) ^ 2 + (t[2] - me[2]) ^ 2 + (t[3] - me[3]) ^ 2) or 20
+      local px = 40 * sz / (math.max(dist, 1) * BEAM.icon_per_m)   -- (its height in pixels, about)
+      local rows = px <= 24 and 24 or px <= 32 and 32 or px <= 48 and 48 or 96
+      local R = scan_icon(ic, rows)
+      local base = cw + sz * 0.1
+      for k = 1, #R, 4 do
+        local h, a, c = base + R[k] * sz, R[k + 1] * sz, R[k + 2] * sz
+        line(C[R[k + 3]], fd, x + rx * a + ux * h, y + ry * a + uy * h, z + uz * h, x + rx * c + ux * h, y + ry * c + uy * h, z + uz * h)
+      end
+      -- the chevron: each bar a few lines across its thickness, the dark edge on either side
+      local tk = sz * 0.035
+      local n = math.max(1, math.floor(rows * 0.035 + 0.5))
+      for side = -1, 1, 2 do
+        for j = -n - 1, n + 1 do
+          local o = tk * j / n
+          local col = (j < -n or j > n) and C[1] or C[3]
+          line(col, fd, x + rx * cw * side + ux * (cw + o), y + ry * cw * side + uy * (cw + o), z + uz * (cw + o), x + ux * o, y + uy * o, z + uz * o)
+        end
+      end
+      return
+    end
     -- (a point a along your right and h along the marker's up, from the chevron's tip)
     line(S.core, fd, x - rx * cw + ux * cw, y - ry * cw + uy * cw, z + uz * cw, x, y, z)
     line(S.core, fd, x + rx * cw + ux * cw, y + ry * cw + uy * cw, z + uz * cw, x, y, z)
@@ -574,7 +697,8 @@ local function laser_draw_body(beams, redraw)
           for _, b in ipairs(beams) do
             -- (the dogs' and sentries' beams: core, cross. (5.0 Test 8) markers are drawn by the world GUI - filled, and seen
             -- through walls like the game's own pings - and as lines only where the game build has none)
-            if laser.styled(b) then if (b.marker and not laser.glow.markers_ok()) or (lines and not b.marker) then laser.draw_styled(b, line) end
+            -- ((5.1.3) and as lines - which walls hide - with Targeting Marker: Behind walls)
+            if laser.styled(b) then if (b.marker and (laser.walls or not laser.glow.markers_ok())) or (lines and not b.marker) then laser.draw_styled(b, line) end
             else LO.add_line(lo, colour(b.argb), V(b.from[1], b.from[2], b.from[3]), V(b.to[1], b.to[2], b.to[3])) end   -- (any other line)
           end
         end
@@ -794,7 +918,7 @@ do
     local function P(a, h) return V(x + rx * a + ux * h, y + ry * a + uy * h, z + uz * h) end
     local PV = G.pv or {}; G.pv = PV   -- ((5.1.0 release review) a marker's corners, reused)
     for _, b in ipairs(beams) do
-      local M = b.marker and MARK[b.argb]
+      local M = b.marker and not laser.walls and MARK[b.argb]   -- ((5.1.3) Behind walls: lines instead
       if M then
         local ic, sz, cw
         ic, x, y, z, rx, ry, sz, cw, ux, uy, uz = laser.marker_geom(b)
@@ -893,7 +1017,7 @@ do
     -- ((5.0 Test 8) also with the Glow off when there are markers to draw)
     local any = G.on()
     if not any and G.markers_ok() then
-      for _, b in ipairs(redraw and (G.last or beams) or beams) do if b.marker then any = true; break end end
+      for _, b in ipairs(redraw and (G.last or beams) or beams) do if b.marker and not laser.walls then any = true; break end end
     end
     if not any then if next(G.ids) then G.clear() end; G.last = nil; return end
     -- (a retained GUI still holds the last frame's triangles: nothing to do on a redraw)
