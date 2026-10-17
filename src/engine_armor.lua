@@ -251,6 +251,31 @@ armor('d63fcbff0851b7af', 4, 'Harvester')                   -- cha_tripod_tier_2
 armor('453fe22c634eb30f', 4, 'Gatekeeper', { open = true })  -- cha_exomech_ranged
 armor('20b9c7734daead65', 3, 'Veracitor', { open = true })   -- cha_exomech_melee (Main AV3: only the Rover looks at its parts)
 
+-- (5.1.3; a player: the Machine Gun Sentry tried to kill a Jet Brigade Hulk by shooting its head) entities on the
+-- units of listed enemies that weren't listed - an unlisted kind counts as unarmored, so every gun fired on it where the
+-- game aims (a Hulk's head). Found by checking every entity in the asset index whose unit is a listed enemy's; the ones
+-- without a file name are most likely the sub-faction versions (Jet Brigade, Incineration Corps). Armor as their listed
+-- kin; the Hulks and the Behemoth get their part models by name, the others below by type id
+armor('32cdeada234fb8df', 4, 'Hulk Bruiser')                -- (on cha_lieutenant; no file name)
+armor('e44ec9f9b3fe1d2a', 4, 'Hulk Scorcher')               -- (on cha_lieutenant_assault; no file name)
+armor('1e66ee1f6f7fd00e', 4, 'Hulk Obliterator')            -- cha_lieutenant_artillery
+armor('96ba14c9ebb49ce1', 4, 'Hulk')                        -- cha_lieutenant_base
+armor('1897bdd32105d2dc', 4, 'Hulk Scorcher')               -- cha_lieutenant_ivory_legion_assault
+armor('fd5247653c897803', 4, 'Charger Behemoth')            -- (on cha_charger_bull; no file name)
+armor('91ebd77931110afc', 4, 'Heavy Devastator', { legs = 2, burst = true })   -- (on cha_soldier_heavy_weapon; no file name)
+armor('fc8dec78be8ab47d', 2, 'Devastator')                  -- (on cha_soldier; no file name)
+armor('be743b2faa3a6e26', 2, 'Devastator (jump pack)')      -- cha_soldier_jumppack
+armor('f66d0bad8693779a', 2, 'Rocket Devastator')           -- cha_soldier_rpg_assassinate
+armor('98152772a72f7838', 5, 'Dropship', { sentries_skip = true })   -- (on cyborg_dropship; no file name)
+armor('2cf3488c4845f8bd', 5, 'Cannon Turret')               -- cyborg_turret_heavycannon (the Annihilator turret's unit)
+armor('abdb2e2a0479d8ca', 5, 'Cannon Turret')               -- cyborg_turret_base
+armor('b8580cac32214fc0', 5, 'Annihilator Tank turret')     -- cyborg_tank_turret_base
+armor('96110f9d6b010e02', 4, 'Leviathan (cannon turret)')   -- (on illuminate_turret_wm_cannon; no file name)
+armor('f196069e7e14c497', 4, 'Leviathan (cannon turret)')   -- illuminate_turret_wm_cannon_head_l
+armor('7acb4bd753b71de0', 4, 'Leviathan (cannon turret)')   -- illuminate_turret_wm_cannon_head_r
+armor('397fb7e4883af100', 2, 'Reinforced Scout Strider (rocket rack)')   -- (on its rocket rack unit; no file name)
+armor('a8173fba5dec35c3', 2, 'Reinforced Scout Strider (rocket rack)')   -- (on its rocket rack unit; no file name)
+
 -- the highest armor each dog can hurt (its armor penetration)
 local PEN = { ['Rover'] = 2, ['Guard Dog'] = 3, ['K-9'] = 7 }
 -- (sentries carry their own 'pen' in SENTRIES: machine gun and Gatling 3, Laser 4 (Heavy); those without one - the
@@ -520,19 +545,21 @@ do
   local DEV_S2 = { DEV_S[2], DEV_S[1] }
   local KNOWN = {   -- units the asset index names: their own skeleton first
     ['846bc06c6b213a06'] = HULK_S[1], ['b16493b009eec762'] = HULK_S[2],
+    ['32cdeada234fb8df'] = HULK_S[1], ['1e66ee1f6f7fd00e'] = HULK_S[1], ['96ba14c9ebb49ce1'] = HULK_S[1], ['1897bdd32105d2dc'] = HULK_S[1],
+    ['e44ec9f9b3fe1d2a'] = HULK_S[2], ['fd5247653c897803'] = CHARGER_S[1],
     ['1a7fcdff98c664b0'] = CHARGER_S[1], ['3aff5fd7d5450b99'] = CHARGER_S[1], ['6b202392f4ab605e'] = CHARGER_S[2], ['0ab7b92b131c228c'] = CHARGER_S[3],
   }
   -- (5.1 Test 1) the other models by type id (the game's entity or unit ids; the asset index gives each entity's unit)
   local BY_KIND = {}
   local function give(model, skels, ...) for _, h in ipairs({ ... }) do BY_KIND[h] = { model, skels } end end
-  give(devastator('Heavy Devastator', 4), DEV_S, 'b92435fbf60f0748', '3d9c95bd03c0c7cf', 'f8b5a81a86d5d4eb', '793d676154cce8f9', 'b8a9c5e5ca2bed52', '9b9e22b1fbf4aead')
+  give(devastator('Heavy Devastator', 4), DEV_S, 'b92435fbf60f0748', '3d9c95bd03c0c7cf', 'f8b5a81a86d5d4eb', '793d676154cce8f9', 'b8a9c5e5ca2bed52', '9b9e22b1fbf4aead', '91ebd77931110afc')
   give(devastator('Incendiary MG Devastator', 5), DEV_S, '58b2b86c11369241')
   give(devastator('Conflagration Devastator', 4), DEV_S2, 'e0353177f1329573')
   give(IMPALER, { { f = { 65, 110 }, c = { 87, 120 } } }, 'dcf8e74212fbee3b')
   give(TITAN, { { f = { 93 }, c = { 134, 121 } } }, '9e2e17f2ccccafdd', 'ef04cb84d097a497')
   give(DRAGON, { { f = { 84 }, c = { 121, 115 } } }, '960b48a421a3faaa')
   give(TANK, { { f = { 25 }, c = { 35, 36 } } }, '00bcf8247a544cdc', 'c6449ffd9ea3779c', '63df3d07b7424588', '53d8919d7b8abd67', '31bae74d2f064d8d')
-  give(CANNON_TURRET, { { f = { 17 }, c = { 20, 33 } } }, 'cecd6979cf7bb0f2', '8fb47dd28b398cf7')
+  give(CANNON_TURRET, { { f = { 17 }, c = { 20, 33 } } }, 'cecd6979cf7bb0f2', '8fb47dd28b398cf7', '2cf3488c4845f8bd', 'abdb2e2a0479d8ca', 'b8580cac32214fc0')
   give(autocannon_turret('Shredder turret', 5), { { f = { 16 }, c = { 17, 33 } } }, '49674794a165eda8')
   give(autocannon_turret('Anti-Air Emplacement', 4), { { f = { 16 }, c = { 17, 33 } } }, 'aeaef7a1851e6c9d')
   give(MORTAR, { { f = { 17 }, c = { 18, 28 } } }, '6293d7ab6e681855', 'ff5cc825b9571052')

@@ -56,12 +56,20 @@ local menu_step = (function()
     { key = 'seaf_safety', label = 'SEAF Safety', type = 'toggle',
       description = 'Your guard dog and your sentries don\'t shoot through SEAF soldiers or civilians: they hold fire while one is in their line of fire, don\'t swing their fire across one, and the mortars, the Tesla Tower and the rocket, autocannon and flame sentries leave alone enemies right next to one. Turn off to let them fire through SEAF soldiers and civilians. Everything else keeps working.',
       apply = function(v) set('SEAFSafety', v) end, start = function() return flag('SEAFSafety') end },
-    -- ((5.1.0 Test 1, the author: "You can remove the line option") the glow in two color schemes, as in the mod manager)
-    -- ((release review) a new key: the old 'laser' row's saved choice numbers meant Line / Glow)
-    { key = 'laser_color', label = 'Targeting Laser', type = 'choice', choices = { 'Off', 'Red while firing', 'Green while firing' },
-      description = 'A soft glowing laser from the barrel of your guard dog and your sentries (not the mortars), only on your screen, showing through walls like the markers. Red while firing: red while they fire, flashing green when a friendly is in the way. Green while firing: the other way round. The Tesla Tower shows its reach as a red ring.',
-      apply = function(v) set('Laser', v ~= 1); set('Glow', v ~= 1); set('LaserInvert', v == 3) end,
-      start = function() return not flag('Laser') and 1 or (flag('LaserInvert') and 3 or 2) end },
+    -- ((5.1.3, the author: "organize the options better for the targeting laser ... add targeting laser color as an
+    -- option and then add Targeting laser Glow and Line as options again") as in the mod manager: the style here, the colors
+    -- in Laser Color. New keys: the old 'laser' (Line / Glow) and 'laser_color' (Off / Red / Green / Line) rows saved other
+    -- choice numbers
+    -- ((release review, the author: "Glow laser should be first, and line should be an option they can switch to") Glow
+    -- first, as in the mod manager)
+    { key = 'laser_style', label = 'Targeting Laser', type = 'choice', choices = { 'Glow', 'Line', 'Off' },
+      description = 'A laser from the barrel of your guard dog and your sentries (not the mortars), only on your screen: one color while they fire, the other flashing when a friendly is in the way (see Laser Color). Glow: a soft glowing beam that shows through walls, like the markers. Line: a thin line that walls hide. The Tesla Tower shows its reach as a red ring.',
+      apply = function(v) set('Laser', v ~= 3); set('Glow', v == 1) end,
+      start = function() return not flag('Laser') and 3 or (flag('Glow') and 1 or 2) end },
+    { key = 'laser_colors', label = 'Laser Color', type = 'choice', choices = { 'Red while firing', 'Green while firing' },
+      description = 'The targeting laser\'s colors, for the Glow and the Line. Red while firing: red while they fire, flashing green when a friendly is in the way. Green while firing: the other way round (the colors before 5.0).',
+      apply = function(v) set('LaserInvert', v == 2) end,
+      start = function() return flag('LaserInvert') and 2 or 1 end },
     { key = 'laser_brightness', label = 'Laser Brightness', type = 'choice',
       choices = { 'Dim (50%)', 'Softer (75%)', 'Normal (100%)', 'Bright (150%)', 'Brightest (200%)' },
       description = 'How bright the targeting laser is: its beams and rings.',
@@ -73,10 +81,12 @@ local menu_step = (function()
         for i, x in ipairs(BRIGHT) do if not bd or math.abs(x - b) < bd then best, bd = i, math.abs(x - b) end end
         return best
       end },
-    -- (5.0 Test 13) Targeting Marker: its own on/off row, after Laser Brightness
-    { key = 'marker', label = 'Targeting Marker', type = 'toggle',
-      description = 'The gun\'s stratagem icon over the enemy your guard dog or sentry is on, only on your screen: yellow while it is on it, gray when it goes out of sight. Only on enemies it can hurt and has in reach. Works with or without the Targeting Laser. Turn off to hide the markers.',
-      apply = function(v) set('Marker', v) end, start = function() return flag('Marker') end },
+    -- (5.0 Test 13) Targeting Marker: its own row, after Laser Brightness. ((5.1.3) a choice now, as in the mod
+    -- manager: through walls or hidden by them - a new key, the old 'marker' row saved on/off)
+    { key = 'marker_walls', label = 'Targeting Marker', type = 'choice', choices = { 'Off', 'Through walls', 'Behind walls' },
+      description = 'The gun\'s stratagem icon over the enemy your guard dog or sentry is on, only on your screen: yellow while it is on it, gray when it goes out of sight. Only on enemies it can hurt and has in reach. Through walls: shown over everything, like a ping. Behind walls: walls hide it (drawn solid, so Marker Opacity doesn\'t change it).',
+      apply = function(v) set('Marker', v ~= 1); set('MarkerWalls', v == 3) end,
+      start = function() return not flag('Marker') and 1 or (flag('MarkerWalls') and 3 or 2) end },
     -- (5.0 Test 15) Marker Opacity: how see-through the markers are (dimmest first, like Laser Brightness)
     { key = 'marker_opacity', label = 'Marker Opacity', type = 'choice',
       choices = { 'Faint (25%)', 'Light (50%)', 'Medium (75%)', 'Full (100%)' },
@@ -133,6 +143,11 @@ end)()
 -- (4.6.3) this frame's laser: the dog's beam and the sentries' beams, drawn together (called in a pcall from tick)
 laser.step = function(st, sentries_out, t)
   laser.inv = laser.inverted()   -- ((5.1.0 release review) the Targeting Laser color choice, once a frame)
+  laser.walls = rawget(_G, 'SmarterGuardDogsMarkerWalls') == true   -- ((5.1.3) Targeting Marker: Behind walls
+  -- (the markers drawn as lines - Behind walls, or a game build with no world GUI: their icons cut ahead, one a frame)
+  -- ((release review) only while the markers are on, and no more once every icon is cut)
+  if not laser.markers_warm and rawget(_G, 'SmarterGuardDogsMarker') == true
+     and (laser.walls or not (laser.glow and laser.glow.markers_ok())) then laser.warm_markers() end
   laser.me = (st and st.player_pos) or EXT.me   -- ((5.0) beams fade with their distance from you)
   local beams = {}
   laser.dog_target = false
