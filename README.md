@@ -12,7 +12,8 @@ Smarter Guard Dogs & Sentries makes the shooting guard dog backpacks and your se
 - **Part armor for nearly every armored enemy (Armor Intelligence):** your dogs and sentries follow their line of fire to the point the game aims them at, and the first part it meets decides, by that part's armor. Besides Hulks and Chargers, now also Impalers (head and rear), Bile Titans (belly and bile sac from below), Dragonroaches (sacs and wings), tanks (engine bay, tracks and the turret's heatsink), the Barrager's launch tubes, the Anti-Air and Mortar Emplacements and Bunker Turrets (heatsink), Factory Striders (belly panels, rear engine weak spot, scrambler), the Vox Engine (vents, hatch, flaps, launchers, speakers, tracks), War Strider hip joints, Scout Strider legs and pilots (for the Rover), Harvesters (eye, hip joints), and Gatekeepers and Veracitors (shield and weak spots). Anything the part can't be worked out for is judged by its main armor, as before.
 - **Heavy Devastators kept suppressed:** nothing holds fire on them any more: the Guard Dog and the Machine Gun and Gatling sentries fire short bursts while the shield is in the way and go full auto the moment its back is turned, and the Rover keeps burning them.
 - **Sharper target markers and Marker Size (new option):** the markers are traced from the game's own stratagem icons, so their edges stay clean at any size, and Marker Size sets them from 50% to 200%. The dog's marker only shows on a target it keeps, instead of flicking to enemies it can't reach.
-- **Laser colors:** choose *Red while firing* (the default, flashing green when a friendly is in the way) or *Green while firing* (the colors before 5.0, flashing red for the safety). The laser is the glow beam in both.
+- **Markers behind walls (5.1.3):** Targeting Marker now has two choices: *Through walls* (the default, like a ping) or *Behind walls*, where walls and objects hide the markers.
+- **Glow or Line laser, and Laser Color (5.1.3):** Targeting Laser is the *Glow* beam (the default) or a thin *Line* that walls hide. The new Laser Color option picks *Red while firing* (the default, flashing green when a friendly is in the way) or *Green while firing* (the colors before 5.0, flashing red for the safety) for either one.
 - **Better enemy identification:** Rocket Devastators no longer get the Heavy Devastators' short bursts, the Factory Strider's gatlings and the Vox Engine's miniguns are judged by their real armor (Medium, so the Machine Gun and Gatling sentries and the Guard Dog take them on), and more Annihilator Tank, Factory Strider, Harvester and Reinforced Scout Strider variants are recognized.
 
 ## Guard dog features
@@ -44,9 +45,10 @@ Smarter Guard Dogs & Sentries makes the shooting guard dog backpacks and your se
 
 ## Targeting laser and markers
 Shown only on your screen, for your dog and your sentries (not the mortars, which fire over cover).
-- **Targeting Laser:** a soft glowing beam out of each gun's barrel along where it's really pointing, like a mounted laser, so you can see the angle it's firing from, with a bright spot on the target; it shows through walls and objects, like the markers. *Red while firing* (the default): red while it fires, flashing green when a friendly is in the way and the safety holds the shot. *Green while firing*: the other way round. Off while the dog reloads. The Tesla Tower shows its 20 m reach as a red ring, lit the whole time it's out, and a red ring flashes around the Rocket Sentry while an enemy is too close for it to fire.
+- **Targeting Laser:** a beam out of each gun's barrel along where it's really pointing, like a mounted laser, so you can see the angle it's firing from, with a bright spot on the target. *Glow* (the default): a soft glowing beam that shows through walls and objects. *Line*: a thin line that walls and objects hide. Off while the dog reloads. The Tesla Tower shows its 20 m reach as a red ring, lit the whole time it's out, and a red ring flashes around the Rocket Sentry while an enemy is too close for it to fire.
+- **Laser Color:** *Red while firing* (the default): red while it fires, flashing green when a friendly is in the way and the safety holds the shot. *Green while firing*: the other way round.
 - **Laser Brightness:** Dim (50%), Softer (75%), Normal, Bright (150%) or Brightest (200%), for the beams and rings.
-- **Targeting Marker:** each gun's own stratagem icon over the enemy it's on, like a ping: yellow while it's on that enemy, gray when the enemy goes out of sight (cover or smoke). Only on enemies it can hurt and has in reach; several guns on one enemy show side by side; it faces you from any angle and shows through walls. Works with or without the laser.
+- **Targeting Marker:** each gun's own stratagem icon over the enemy it's on, like a ping: yellow while it's on that enemy, gray when the enemy goes out of sight (cover or smoke). Only on enemies it can hurt and has in reach; several guns on one enemy show side by side; it faces you from any angle. *Through walls* (the default): shown over everything, like a ping. *Behind walls*: walls and objects hide it (drawn solid, so Marker Opacity doesn't change it). Works with or without the laser.
 - **Marker Opacity:** Full (100%), Medium (75%), Light (50%) or Faint (25%).
 - **Marker Size:** Smallest (50%), Small (75%), Normal, Large (150%) or Largest (200%).
 
@@ -61,9 +63,10 @@ Only your own dog and sentries are affected (the Safety option also protects the
 - **Safety** - choose who they never fire through: *You and your teammates*, *Only you* or *Only your teammates*. Turn off at your own risk.
 - **Sentry Safety** - your sentries don't fire through other sentries, yours or your teammates'. On by default.
 - **SEAF Safety** - your dog and your sentries don't fire through SEAF soldiers or civilians. On by default.
-- **Targeting Laser** - new in 5.1: choose *Red while firing* (the default) or *Green while firing*, or turn off to hide the laser.
+- **Targeting Laser** - choose *Glow* (the default) or *Line*, or turn off to hide the laser.
+- **Laser Color** - new in 5.1.3: choose *Red while firing* (the default) or *Green while firing*.
 - **Laser Brightness** - choose *Normal (100%)* (the default), *Dim (50%)*, *Softer (75%)*, *Bright (150%)* or *Brightest (200%)*.
-- **Targeting Marker** - each gun's icon over its target. On by default; turn off to hide the markers.
+- **Targeting Marker** - each gun's icon over its target: choose *Through walls* (the default) or *Behind walls*, or turn off to hide the markers.
 - **Marker Opacity** - choose *Full (100%)* (the default), *Medium (75%)*, *Light (50%)* or *Faint (25%)*.
 - **Marker Size** - new in 5.1: choose *Normal (100%)* (the default), *Smallest (50%)*, *Small (75%)*, *Large (150%)* or *Largest (200%)*.
 **In game:** with [Mod Options Menu](https://github.com/CowboyBingus/ModOptionsMenu) installed, every option is also under ESC > MODS > SMARTER GUARD DOGS & SENTRIES, laid out as in the mod manager, and a change takes effect the moment you apply it. The options picked in the mod manager are the starting values.
@@ -77,7 +80,7 @@ Get the latest zip from the [Releases](../../releases/latest) page (the `Smarter
 ## Install / update
 1. Install Bingus Shared Loader v19 or newer.
 2. Remove any older version of Smarter Guard Dogs (& Sentries).
-3. Add Smarter-Guard-Dogs-and-Sentries-5.1.2.zip in Arsenal or the HD2 Mod Manager and check the options you want (updating: check the new Marker Size option, and pick Red while firing or Green while firing under Targeting Laser).
+3. Add Smarter-Guard-Dogs-and-Sentries-5.1.3.zip in Arsenal or the HD2 Mod Manager and check the options you want (updating: check Targeting Laser, the new Laser Color option and Targeting Marker).
 4. Purge, then Deploy (always both, every time you install or update), then restart the game.
 
 ## Uninstall
@@ -99,7 +102,7 @@ Remove it in your mod manager, then Purge and Deploy. Nothing is left behind in 
 - A Harvester's shield isn't modeled: it is judged as if the shield were down.
 - Sentries sometimes finish a salvo or burst on their old target before switching, and the Autocannon and Rocket sentries may fire at the spot for up to a second after a kill (stopping that would cut their salvos short).
 - The Tesla Tower can't be stopped once it has started a zap, so a helldiver who steps into its path at that moment can still be hit. Going prone still keeps you safe, as in the base game.
-- The laser and the markers show through walls and objects (the game draws them on top of the world).
+- The Glow laser and the Through walls markers show through walls and objects (the game draws them on top of the world). Pick Line and Behind walls to have walls hide them; Behind walls markers are drawn solid, so Marker Opacity doesn't change them.
 - The Rocket Sentry can't fire while an enemy is within about 10 m of it (the game's rule); a red ring flashes around it then.
 - Teammates' sentries run on their own game and aren't changed (yours still won't fire through them).
 - Teammates piloting an exosuit aren't protected yet (you are).
