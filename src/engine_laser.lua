@@ -261,6 +261,7 @@ do
   -- (0.3-1.8 ms; warmed one icon a frame while Behind walls is on, see laser.warm_markers); smaller markers take every
   -- 2nd, 3rd or 4th row (48, 32, 24 rows), about one row per pixel of the marker's height on screen
   local BASE_ROWS = 96
+  local MARK_LINES = 500   -- ((5.1.4) the most lines all Behind walls markers may use in a frame, the chevrons aside)
   local SCAN, CUT = {}, {}
   local function by_start(p, q) return p[1] < q[1] end
   local function cut_icon(ic)
@@ -363,6 +364,15 @@ do
       local px = 40 * sz / (math.max(dist, 1) * BEAM.icon_per_m)   -- (its height in pixels, about)
       local rows = px <= 24 and 24 or px <= 32 and 32 or px <= 48 and 48 or 96
       local R = scan_icon(ic, rows)
+      -- ((5.1.4, players: "the performance is much worse") the marker lines a frame are capped (MARK_LINES for all of
+      -- them together): a lone close marker keeps every row, several at once step down in rows until they fit. A fixed
+      -- cap per marker would have striped every nearby marker - 24 rows is already 60-110 lines)
+      local used = laser.mark_lines or 0
+      while rows > 24 and used + #R / 4 > MARK_LINES do
+        rows = rows == 96 and 48 or rows == 48 and 32 or 24
+        R = scan_icon(ic, rows)
+      end
+      laser.mark_lines = used + #R / 4
       local base = cw + sz * 0.1
       for k = 1, #R, 4 do
         local h, a, c = base + R[k] * sz, R[k + 1] * sz, R[k + 2] * sz
@@ -794,15 +804,18 @@ do
     [LOCK] = { core = { 180, 255, 190, 70 }, halo = { 45, 255, 150, 20 }, dot = { 200, 255, 210, 120 } },
   }
   local WIDTH = { core = 0.006, halo = 0.03 }   -- half-widths in meters
-  local PIECES, FADE_TO, SPOT = 10, 0.3, 0.03   -- alpha falls to this share at the far end; the spot's half-size
+  local FADE_TO, SPOT = 0.3, 0.03   -- alpha falls to this share at the far end; the spot's half-size
+  -- ((5.1.4, players: "the performance is much worse") the pieces along each strip, each one a step of the fade: 4 for
+  -- the faint halo and 6 for the core (10 each before, 86 triangles a beam; now 46, the same look in the preview)
+  local PIECES = { halo = 4, core = 6 }
   local PARTS = { 'halo', 'core' }              -- (the core drawn last, on top)
   local LOOKS = {}
   for base, c in pairs(LOOK) do
     local S = { dot = c.dot }
     for _, part in ipairs(PARTS) do
       local steps = {}
-      for k = 1, PIECES do
-        local f = 1 + (FADE_TO - 1) * (k - 0.5) / PIECES
+      for k = 1, PIECES[part] do
+        local f = 1 + (FADE_TO - 1) * (k - 0.5) / PIECES[part]
         steps[k] = { math.floor(c[part][1] * f + 0.5), c[part][2], c[part][3], c[part][4] }
       end
       S[part] = steps
@@ -973,8 +986,9 @@ do
             local ax, ay, az = ux * wd, uy * wd, uz * wd
             if pass == 2 then ax, ay, az = vx * wd, vy * wd, vz * wd end
             local pa, pb = V(f[1] + ax, f[2] + ay, f[3] + az), V(f[1] - ax, f[2] - ay, f[3] - az)
-            for k = 1, PIECES do
-              local s = len * k / PIECES
+            local n = PIECES[part]
+            for k = 1, n do
+              local s = len * k / n
               local x, y, z = f[1] + dx * s, f[2] + dy * s, f[3] + dz * s
               local na, nb = V(x + ax, y + ay, z + az), V(x - ax, y - ay, z - az)
               local col = steps[k]
