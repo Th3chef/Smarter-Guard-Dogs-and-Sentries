@@ -14,33 +14,35 @@ def resource_hash(name):
     h ^= h >> 47; h = (h * m) & mask; h ^= h >> 47
     return h
 
-MODULE = 'mods/chef/smarter_guard_dogs'
-LASER_MODULE = 'mods/chef/smarter_guard_dogs_laser'
-ARMOR_MODULE = 'mods/chef/smarter_guard_dogs_armor'
-TEAM_MODULE = 'mods/chef/smarter_guard_dogs_teammates'
-SAFETY_MODULE = 'mods/chef/smarter_guard_dogs_safety'
-DOGS_MODULE = 'mods/chef/smarter_guard_dogs_dogs'
-SENTRIES_MODULE = 'mods/chef/smarter_guard_dogs_sentries'
-TESLA_MODULE = 'mods/chef/smarter_guard_dogs_tesla'
-PRIORITY_MODULE = 'mods/chef/smarter_guard_dogs_priority'
-SENTRY_SAFETY_MODULE = 'mods/chef/smarter_guard_dogs_sentry_safety'   # (4.6.5)
-SEAF_SAFETY_MODULE = 'mods/chef/smarter_guard_dogs_seaf_safety'   # (4.7.0)
-PING_MODULE = 'mods/chef/smarter_guard_dogs_ping'   # (5.0.0)
-MARKER_MODULE = 'mods/chef/smarter_guard_dogs_marker'   # (5.0.0 Test 13)
-GLOW_MODULE = 'mods/chef/smarter_guard_dogs_glow'
-INVERT_MODULE = 'mods/chef/smarter_guard_dogs_laser_invert'   # (5.1.0 Test 1)
-MARKER_WALLS_MODULE = 'mods/chef/smarter_guard_dogs_marker_walls'   # (5.1.3)
+MODULE = 'mods/chef/smarter_guard_dogs_and_sentries'   # ((5.1.5 Test 17) was mods/chef/smarter_guard_dogs: Mod Lag Watchdog shows this name. The
+#  Arsenal folders, GUIDs, the SmarterGuardDogs global and flags and the Mod Options Menu ids stay, so updates install in place
+#  and saved menu settings carry over)
+LASER_MODULE = 'mods/chef/smarter_guard_dogs_and_sentries_laser'
+ARMOR_MODULE = 'mods/chef/smarter_guard_dogs_and_sentries_armor'
+TEAM_MODULE = 'mods/chef/smarter_guard_dogs_and_sentries_teammates'
+SAFETY_MODULE = 'mods/chef/smarter_guard_dogs_and_sentries_safety'
+DOGS_MODULE = 'mods/chef/smarter_guard_dogs_and_sentries_dogs'
+SENTRIES_MODULE = 'mods/chef/smarter_guard_dogs_and_sentries_sentries'
+TESLA_MODULE = 'mods/chef/smarter_guard_dogs_and_sentries_tesla'
+PRIORITY_MODULE = 'mods/chef/smarter_guard_dogs_and_sentries_priority'
+SENTRY_SAFETY_MODULE = 'mods/chef/smarter_guard_dogs_and_sentries_sentry_safety'   # (4.6.5)
+SEAF_SAFETY_MODULE = 'mods/chef/smarter_guard_dogs_and_sentries_seaf_safety'   # (4.7.0)
+PING_MODULE = 'mods/chef/smarter_guard_dogs_and_sentries_ping'   # (5.0.0)
+MARKER_MODULE = 'mods/chef/smarter_guard_dogs_and_sentries_marker'   # (5.0.0 Test 13)
+GLOW_MODULE = 'mods/chef/smarter_guard_dogs_and_sentries_glow'
+INVERT_MODULE = 'mods/chef/smarter_guard_dogs_and_sentries_laser_invert'   # (5.1.0 Test 1)
+MARKER_WALLS_MODULE = 'mods/chef/smarter_guard_dogs_and_sentries_marker_walls'   # (5.1.3)
 # (4.5.3) Laser Brightness: one tiny addon per sub-option, all under the same name (only one is installed at a time)
-BRIGHT_MODULE = 'mods/chef/smarter_guard_dogs_brightness'
+BRIGHT_MODULE = 'mods/chef/smarter_guard_dogs_and_sentries_brightness'
 BRIGHTS = [('Normal (100%)', 1.0, 'Laser Brightness 100'), ('Dim (50%)', 0.5, 'Laser Brightness 50'), ('Softer (75%)', 0.75, 'Laser Brightness 75'),
            ('Bright (150%)', 1.5, 'Laser Brightness 150'), ('Brightest (200%)', 2.0, 'Laser Brightness 200')]
 # (5.0.0 Test 15) Marker Opacity: the same way, one tiny addon per sub-option under one name
-OPAC_MODULE = 'mods/chef/smarter_guard_dogs_marker_opacity'
+OPAC_MODULE = 'mods/chef/smarter_guard_dogs_and_sentries_marker_opacity'
 OPACS = [('Full (100%)', 1.0, 'Marker Opacity 100'), ('Medium (75%)', 0.75, 'Marker Opacity 75'), ('Light (50%)', 0.5, 'Marker Opacity 50'),
          ('Faint (25%)', 0.25, 'Marker Opacity 25')]
 # (5.1.0 Test 1, the author: "Add an option in the options menu to adjust the size of the targeting marker") Marker Size,
 # the same way: one tiny addon per sub-option under one name; the first entry is the mod manager's default
-SIZE_MODULE = 'mods/chef/smarter_guard_dogs_marker_size'
+SIZE_MODULE = 'mods/chef/smarter_guard_dogs_and_sentries_marker_size'
 SIZES = [('Normal (100%)', 1.0, 'Marker Size 100'), ('Smallest (50%)', 0.5, 'Marker Size 50'), ('Small (75%)', 0.75, 'Marker Size 75'),
          ('Large (150%)', 1.5, 'Marker Size 150'), ('Largest (200%)', 2.0, 'Marker Size 200')]
 def size_source(v):
@@ -55,7 +57,7 @@ def bright_source(v):
     return ('-- HD2-Addon: %s\n'
             '-- Smarter Guard Dogs & Sentries - Laser Brightness (optional part): the targeting laser at %d%%.\n'
             "rawset(_G, 'SmarterGuardDogsLaserBrightness', %s)\n" % (BRIGHT_MODULE, round(v * 100), repr(v))).encode('utf-8')
-VERSION = '5.1.4'
+VERSION = '5.2.0'
 NAME_SUFFIX = ''   # '' for releases, e.g. ' Test 3' for test builds
 ARCHIVE = '9ba626afa44a3aa3.patch_0'        # the game archive the shared loader reads addons from
 LUA_TYPE, MAGIC = 0xa14e8dfa2cd117e2, 0xF0000011
@@ -83,11 +85,13 @@ def archive(entries):
     return header(total) + rows + body
 
 # (4.6.6 Test 2+) research probe (engine_probe.lua): numbered Tester builds only, never a release or a release's Tester
-PROBE_PART, PROBE_BEFORE = 'engine_probe5', 'engine_main'   # (5.0.0 Test 4: gunship lead and body parts; engine_probe.lua, the ping probe, is shelved)
+# ((5.1.5 Test 19) shelved too: its gunship-lead, body-part and mortar research is done, and it read a mortar's whole
+# weapon record and more every frame - Tester cost in the big fights I'm measuring. PROBE_PART = 'engine_probe5' brings it back)
+PROBE_PART, PROBE_BEFORE = None, 'engine_main'
 
 def source(read_only, tester=False):
     parts = list(PARTS)
-    if tester and NAME_SUFFIX:
+    if tester and NAME_SUFFIX and PROBE_PART:
         parts.insert(parts.index(PROBE_BEFORE), PROBE_PART)
     src = ''.join(open(os.path.join(HERE, p + '.lua'), encoding='utf-8').read() for p in parts)
     # ((5.0 Test 9) Mod Options Menu refuses a row whose description is over 400 characters ("invalid description":
@@ -289,7 +293,7 @@ def package(read_only, out_zip, tester=False):
              'your dog to the game; your sentries and the rest of the mod keep working.',
              'Image': 'options/option_dogs.png', 'Include': [DOGS_DIR]},
             {'Name': 'Sentries', 'Description': 'The mod handles your sentries (Machine Gun, Gatling, Autocannon, Rocket, Laser, '
-             'Flame, Mortar, EMS Mortar and the Tesla Tower), plus the guns on armed resupply pods and the Supply FRV. Turn off to leave your sentries to the game; your guard dog and the '
+             'Flame, Mortar, EMS Mortar, Gas Mortar and the Tesla Tower), plus the guns on armed resupply pods and the Supply FRV. Turn off to leave your sentries to the game; your guard dog and the '
              'rest of the mod keep working.',
              'Image': 'options/option_sentries.png',
              'SubOptions': [

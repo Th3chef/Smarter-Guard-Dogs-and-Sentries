@@ -7,7 +7,7 @@
 local SAFE, dot3, segment_distance, M, TEAM, P, PRIORITY, union, plan, BLANK, hidden, hider_restore, hider_apply, restore, apply, steer
 do
 local FAST = { fire = 0.5, lock = 0.5, recent = 8, recent_seconds = 3.0, near = 20, reach = 35 }
--- (4.6.7 Test 2, the author: the Rover hesitated) fire 0.15 -> 0.5 s, as the Laser Sentry's: each switch costs it a
+-- (4.6.7 Test 2, my note: the Rover hesitated) fire 0.15 -> 0.5 s, as the Laser Sentry's: each switch costs it a
 -- fresh line-up (about half a second), so after only 0.15 s of beam it spent about half its time lining up (sim: firing
 -- 48% -> 67% of the time in a fight, 36% -> 57% surrounded). 'lock' is now checked against P.fire_step, its time in
 -- its firing step whether or not in step with its aim (P.lock, which still counts its line-up too, is for the no-shot
@@ -20,9 +20,9 @@ SAFE = { body_bottom = 0.2, body_top = 1.75, aim_heights = { 0.0, 0.5 } }
 
 local function sub3(a, b) return { a[1] - b[1], a[2] - b[2], a[3] - b[3] } end
 function dot3(a, b) return a[1] * b[1] + a[2] * b[2] + a[3] * b[3] end
-local function clamp01(x) return x < 0 and 0 or (x > 1 and 1 or x) end
 -- shortest distance between segments p1-q1 and p2-q2 (plain numbers throughout: it runs for every enemy and every
 -- protected body each frame, so it makes no tables)
+local mmin, mmax = math.min, math.max
 function segment_distance(p1, q1, p2, q2)
   local d1x, d1y, d1z = q1[1] - p1[1], q1[2] - p1[2], q1[3] - p1[3]
   local d2x, d2y, d2z = q2[1] - p2[1], q2[2] - p2[2], q2[3] - p2[3]
@@ -30,18 +30,21 @@ function segment_distance(p1, q1, p2, q2)
   local a = d1x * d1x + d1y * d1y + d1z * d1z
   local e = d2x * d2x + d2y * d2y + d2z * d2z
   local f = d2x * rx + d2y * ry + d2z * rz
+  -- ((5.1.5 Test 19) the clamps as min/max, not a little function or branches: LuaJIT kept starting traces in the old
+  -- clamp function and giving up (1,234 times in a 6 s big-fight sim, by the new compile counter), and the branches
+  -- written out gave it side exits it couldn't compile either; min/max compile to plain instructions
   local s, t
   if a <= 1e-9 and e <= 1e-9 then s, t = 0, 0
-  elseif a <= 1e-9 then s, t = 0, clamp01(f / e)
+  elseif a <= 1e-9 then s, t = 0, mmax(0, mmin(1, f / e))
   else
     local c = d1x * rx + d1y * ry + d1z * rz
-    if e <= 1e-9 then s, t = clamp01(-c / a), 0
+    if e <= 1e-9 then s, t = mmax(0, mmin(1, -c / a)), 0
     else
       local b = d1x * d2x + d1y * d2y + d1z * d2z
       local den = a * e - b * b
-      s = den ~= 0 and clamp01((b * f - c * e) / den) or 0
+      s = den ~= 0 and mmax(0, mmin(1, (b * f - c * e) / den)) or 0
       t = (b * s + f) / e
-      if t < 0 then t, s = 0, clamp01(-c / a) elseif t > 1 then t, s = 1, clamp01((b - c) / a) end
+      if t < 0 then t, s = 0, mmax(0, mmin(1, -c / a)) elseif t > 1 then t, s = 1, mmax(0, mmin(1, (b - c) / a)) end
     end
   end
   local x = (p1[1] + d1x * s) - (p2[1] + d2x * t)
@@ -139,7 +142,7 @@ end
 TEAM = { margin = 0.1, lead = 0.2, reach = 90 }
 
 -- the bodies to keep out of the line of fire: you, then each teammate near enough to matter
--- (Testers, 5.0 Test 9, the author: "rover and seaf troops is better, but not 100%") while the dog fires, any SEAF soldier
+-- (Testers, 5.0 Test 9, my ask: "rover and seaf troops is better, but not 100%") while the dog fires, any SEAF soldier
 -- or civilian within 0.6 m of its line to its target is logged (at most once a second, 15 a session): how close, how far
 -- from the dog, whether the mod was hiding that target from it and the dog's AI step - to see what still gets through
 SGD.dog_seaf_check = function(st, req, t)
@@ -170,7 +173,7 @@ local function bodies_of(st)
   local out = {}
   if OPT.safety() then out[1] = { lo = { me[1], me[2], me[3] + SAFE.body_bottom }, hi = { me[1], me[2], me[3] + SAFE.body_top }, at = me, extra = 0 } end
   local D = st.drone_pos
-  -- (4.7.0 SEAF Safety, the author: the guard dogs too) the SEAF soldiers and civilians the sentry code keeps track of
+  -- (4.7.0 SEAF Safety, my note: the guard dogs too) the SEAF soldiers and civilians the sentry code keeps track of
   -- (TEAM.seaf_bodies, set there: their places read twenty times a second (Test 9; ten before), with a look-ahead when they move). Only those
   -- within the dog's reach of it; the option off or none around: nil
   local fb = TEAM.seaf_bodies and TEAM.seaf_bodies(os.clock(), me)
@@ -320,6 +323,9 @@ local BACKOFF_SECONDS = 1.0   -- slow down after the dog ignores two redirects i
 -- passes); and if it has not fired for 'after' seconds it is left to finish lining up on its current target.
 -- It then goes back to closest first and catches up with the closer enemies.
 local COMMIT = { after = 1.0, burst = 0.6, timeout = 4.0 }
+-- ((5.1.5 Test 5) the damage check: seconds of firing without its target's health going down (the Rover's beam hurts at
+-- once), and how long that enemy is then left alone (longer the second time)
+local DOG_NODMG = { wait = 1.0, rover = 0.8, hide = 4.0, hide2 = 10.0, notes = 0 }
 -- no shot: an enemy the dog keeps lining up without ever firing at (the game still lists it, but the dog can't
 -- get a shot: e.g. an enemy stuck under the map). Line-up time on it adds up over repeated picks; once it passes
 -- the limit the enemy rests hidden for a while so the dog moves on. The Guard Dog and K-9 get longer (a Guard
@@ -330,7 +336,7 @@ local COMMIT = { after = 1.0, burst = 0.6, timeout = 4.0 }
 -- current pick must have had at least 'fair' seconds of it in one go (so line-ups cut short by the mod's own
 -- switching don't add up to setting everything aside)
 local NOSHOT = { rover = 1.0, far = 1.0, other = 2.0, fair = 0.6, far_m = 25, rest = 4.0, forget = 5.0,
-  -- ((5.0 Test 17, the author: the Rover "didnt properly prioritize enemies closer to me, and was actually avoiding one for a
+  -- ((5.0 Test 17, my note: the Rover "didnt properly prioritize enemies closer to me, and was actually avoiding one for a
   -- while" - a Test 16 log: a Bile Warrior 9 m from him set aside for 4 s after a 1 s line-up) an enemy within 'near_m' of
   -- you is a threat: it gets 'near' seconds of line-up before it is set aside, and then only for 'near_rest'
   near_m = 15, near = 2.0, near_rest = 1.5,
@@ -532,6 +538,40 @@ function plan(st)
       and burst_only(st.dog, c, st.drone_pos, c.id == st.target and st.aim or nil) then N[c.id] = true end
   end
   for id, until_t in pairs(P.rest) do if t >= until_t then P.rest[id] = nil end end
+  -- ((5.1.5 Test 5) the damage check (HEALTH, engine_state.lua): it has fired a while at its target and the target's
+  -- health hasn't gone down - a wall, a rock or armor in the way: that enemy is left alone for a while and it picks again
+  -- (not a Heavy Devastator behind its shield: the Guard Dog's short bursts there are meant to keep it down)
+  local ND = {}
+  P.nd = P.nd or {}
+  if st.target ~= 0 and st.node == 7 and st.synced and tgt_c and tgt_c.alive and not P.nd[st.target] then
+    local a = tgt_c.kind and ARMOR[tgt_c.kind]
+    -- ((5.1.5 review) nor a shielded enemy: its shield takes the hits first, HEALTH.shielded)
+    if not (a and a.burst) and not HEALTH.shielded[tgt_c.kind] and not (a and a.av >= 5) then   -- ((5.1.5 Test 16) nor AV5+: see nodmg_set
+      P.dw = P.dw or {}
+      local secs = HEALTH.watch(P.dw, st.target, P.fire, t, st.dog.name)
+      if secs and secs >= (st.dog.fast and DOG_NODMG.rover or DOG_NODMG.wait) then
+        P.nd_n = P.nd_n or {}
+        local n = (P.nd_n[st.target] or 0) + 1
+        P.nd_n[st.target] = n
+        P.nd[st.target] = t + (n == 1 and DOG_NODMG.hide or DOG_NODMG.hide2)
+        if P.dw.e then P.dw.e[st.target] = nil end
+        bump(session.actions, 'dog_no_damage')
+        if TESTER then
+          local seen = P.unsafe_seen and P.unsafe_seen[st.target]
+          HEALTH.track_new(st.dog.name, st.dog.name, st.target, st.dog.fast and DOG_NODMG.rover or DOG_NODMG.wait,
+            { t = t, hp = P.dw.hp, hold = P.nd[st.target] - t, meter = nil, unseen = not tgt_c.visible, mate = seen and t - seen < 1.5 })
+        end
+        if TESTER and DOG_NODMG.notes < 80 then
+          DOG_NODMG.notes = DOG_NODMG.notes + 1
+          local nm = a and a.name or (tgt_c.kind and LABELS[tgt_c.kind])
+          event(string.format('no damage (test): %s fired %.1f s at %d (%s%s) and its health stayed at %d of %d: left alone %.0f s', st.dog.name, secs, st.target,
+            tgt_c.kind and hexr(tgt_c.kind) or '-', nm and (' ' .. nm) or '', P.dw.hp or -1, P.dw.mx or -1, P.nd[st.target] - t))
+        end
+      end
+    end
+  end
+  for id, u in pairs(P.nd) do if t >= u then P.nd[id] = nil else ND[id] = true end end
+  if TESTER and #HEALTH.open > 0 then HEALTH.track_step(st.dog.name, st.target, P.fire, t) end
   local S = {}
   for _, c in ipairs(st.candidates) do
     if P.noshot[c.id] and t < P.noshot[c.id] and (c.alive or c.mask == '    ' or c.id == st.target) then S[c.id] = true end
@@ -614,12 +654,12 @@ function plan(st)
   -- focus: while committed (and its target is one it may shoot), keep the other enemies hidden so the game's own
   -- once-a-second re-pick doesn't move it on before it has fired its burst either
   local focus = {}
-  if committed and st.target ~= 0 and P.fire < COMMIT.burst and not (U[st.target] or N[st.target] or C[st.target] or S[st.target] or R[st.target]) then
+  if committed and st.target ~= 0 and P.fire < COMMIT.burst and not (U[st.target] or N[st.target] or C[st.target] or S[st.target] or R[st.target] or ND[st.target]) then
     for _, c in ipairs(st.candidates) do if c.id ~= st.target and (c.eligible or c.mask == '    ') then focus[c.id] = true end end
   end
-  local hide = union(U, F, N, C, R, S, focus)
+  local hide = union(U, F, N, C, R, S, focus, ND)
   st.hidden = hide   -- ((5.1.0 Test 1) for the dog's marker: none over a target the mod is taking away from it)
-  if TESTER then st.hide_sets = { unsafe = U, closer_threat = F, armor = N, cover = C, range = R, no_shot = S, focus = focus } end   -- ((4.6.7 review) the F8 marker's only)
+  if TESTER then st.hide_sets = { unsafe = U, closer_threat = F, armor = N, cover = C, range = R, no_shot = S, focus = focus, no_damage = ND } end   -- ((4.6.7 review) the F8 marker's only)
   -- a re-selection we asked for is still pending: keep the same enemies hidden until the target changes
   -- (4.6.4 review: not while its target has become unsafe - a hold for another reason must never delay a safety stop)
   -- ((4.6.7 review) nor while its target is dead: a back-off hold on it kept the 'target lost' ask off for up to 1 s)
@@ -703,6 +743,8 @@ function plan(st)
   -- hidden, rather than asking the dog to choose again and again for nothing)
   if st.target ~= 0 and attacking and R[st.target] and not calm and in_range_alt then return dog_kick(st, t, hide, { [st.target] = true }, 'out_of_range') end
   if st.target ~= 0 and attacking and S[st.target] then return dog_kick(st, t, hide, { [st.target] = true }, 'no_shot') end
+  -- ((5.1.5 Test 5) firing at it without hurting it)
+  if st.target ~= 0 and attacking and ND[st.target] then return dog_kick(st, t, hide, { [st.target] = true }, 'no_damage') end
   if current and st.node == 7 and P.fire >= BURST.fire and burst_only(st.dog, current, st.drone_pos, st.aim) then
     -- (the whole Devastator rests: its body and its shield are separate entries, rest_parts in engine_armor.lua)
     local parts = rest_parts(P.rest, st.candidates, current, t + BURST.rest)
@@ -837,6 +879,11 @@ hider_apply = function(H, candidates, block)
   end
   return back
 end
+  -- ((5.1.5 Test 22) the hide bookkeeping walks sets with pairs/next, which the game's LuaJIT (2.1.0-alpha) can't compile:
+  -- my Test 19 log had it start and give up on hider_apply 531 times and with_riders 480. Not asked to any more (it ran
+  -- uncompiled anyway; the loops in the functions it calls still compile)
+  local j = rawget(_G, 'jit')
+  if type(j) == 'table' and type(j.off) == 'function' then pcall(j.off, hider_apply); pcall(j.off, with_riders) end
 end
 
 function restore()
@@ -881,7 +928,7 @@ local function note_action(st, req)
         or 'picked again while still set aside'))
     return
   end
-  if req.reason == 'cannot_hurt' or req.reason == 'out_of_sight' or req.reason == 'out_of_range' or req.reason == 'closer_threat' then
+  if req.reason == 'cannot_hurt' or req.reason == 'out_of_sight' or req.reason == 'out_of_range' or req.reason == 'closer_threat' or req.reason == 'no_damage' then
     -- the first few of each go to the log, with what the enemy was
     noted[req.reason] = (noted[req.reason] or 0) + 1
     if noted[req.reason] > 8 then return end
@@ -937,7 +984,7 @@ function steer(st, req)
   if read(st.rec_addr, 4) ~= st.rec_head then return end
   apply(st, req.block)
   if next(req.block) then stats.guarded_polls = stats.guarded_polls + 1 end
-  -- (4.6.5, the author: no firing at the spot for a second after a target is lost) still in its firing step (7) with no
+  -- (4.6.5, my note: no firing at the spot for a second after a target is lost) still in its firing step (7) with no
   -- target: its loss time is moved back, as for the sentries (loss_cut)
   if st.target == 0 and st.node == 7 then
     local age, raw = loss_cut(st.rec_addr, st.now)

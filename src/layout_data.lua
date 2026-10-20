@@ -24,6 +24,8 @@ local PATTERNS = {
     weapons = { { p = '488b3d????????458bda8b77388b6f40', disp_at = 3, size = 7 }, { p = '4c8b1d????????4533f63b15????????', disp_at = 3, size = 7 }, { p = '488b3d????????413bd274??448b5738', disp_at = 3, size = 7 } },
     -- the sentries' heat/ammo meter (12-byte records: +4 how much is used up, +8 overheated): the Laser Sentry's heat
     heatbar = { { p = '4c8b1d????????33c9458b4b30418b5b38', disp_at = 3, size = 7 }, { p = '488b1d????????448b43308b7b380faff8', disp_at = 3, size = 7 }, { p = '488b35????????488bea74??448b4e30', disp_at = 3, size = 7 } },
+    -- ((5.1.5 Test 5) the health component manager, for the damage check: entity id -> health record)
+    health = { { p = '488b35????????4c8bf18bae1c1000003bae38100000', disp_at = 3, size = 7 }, { p = '488b35????????488bda4c8bf18b861c100000', disp_at = 3, size = 7 }, { p = '488b0d????????418b160f29b424a0010000', disp_at = 3, size = 7 } },
   },
   exe_units = { { p = '488905????????488d95c801000041b858010000', disp_at = 3, size = 7 }, { p = '488b3d????????4c8b35????????4885ff', disp_at = 3, size = 7 }, { p = '48892d????????4885ff74??488b0733d2488b35????????', disp_at = 3, size = 7 } },
 }
@@ -32,5 +34,5 @@ local PATTERNS = {
 -- no hashing of ~135 MB of game files at every start
 local KNOWN = { dll_hash = '2E2C3B7C2500646DADD5F2B4C6E0504DBB7E7896139F64CDDC0D1813C718F51E', exe_hash = 'F5FEE03DCFDB2E553A4752C283590950AC13316B376D8196AA556FF0400D5F06',
   dll_stamp = '1790161983/74727424', exe_stamp = '1790149348/60719104',
-  globals = { mission = 53634720, players = 53634152, owners = 54968216, equipment = 53634872, backpacks = 53634536, attachments = 53636544, targeting = 53636400, behaviours = 53634880, perception = 53634376, registry = 53636280, clock = 53633864, weapons = 53636320, heatbar = 53636424 },
+  globals = { mission = 53634720, players = 53634152, owners = 54968216, equipment = 53634872, backpacks = 53634536, attachments = 53636544, targeting = 53636400, behaviours = 53634880, perception = 53634376, registry = 53636280, clock = 53633864, weapons = 53636320, heatbar = 53636424, health = 53634696 },
   owner_index = 15871688, owner_rows = 15937304, stride = 504, exe_units = 27328752, laser_behaviour = 190 }

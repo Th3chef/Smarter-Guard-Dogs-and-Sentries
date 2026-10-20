@@ -278,15 +278,16 @@ armor('a8173fba5dec35c3', 2, 'Reinforced Scout Strider (rocket rack)')   -- (on 
 
 -- the highest armor each dog can hurt (its armor penetration)
 local PEN = { ['Rover'] = 2, ['Guard Dog'] = 3, ['K-9'] = 7 }
--- (sentries carry their own 'pen' in SENTRIES: machine gun and Gatling 3, Laser 4 (Heavy); those without one - the
--- anti-tank weapons and mortars - shoot everything)
+-- (sentries carry their own 'pen' in SENTRIES: machine gun and Gatling 3, Laser 4 (Heavy), Autocannon and Rocket 5
+-- ((5.1.5 Test 10) were 'shoot everything'); those without one - the mortars, the Tesla Tower, the Flame Sentry - shoot
+-- everything)
 
 -- ======================================================================================================
--- (5.0 Test 12) Part armor. the author: "see if the sentries and guard dogs can read what part they are aiming at and
+-- (5.0 Test 12) Part armor. My ask: "see if the sentries and guard dogs can read what part they are aiming at and
 -- determine what Armor rating it is, before firing on it, instead of blacklisting a whole enemy", and "add a fallback
 -- so if it cant determine what part an enemy is, it goes off of the old version and blacklists an enemy based on what
 -- armor rating it is".
--- (5.1 Test 1) the author: "Let's add all of those functionalities. It should only worry about shooting parts of an
+-- (5.1 Test 1) my ask: "Let's add all of those functionalities. It should only worry about shooting parts of an
 -- enemy it can actually hit, Sentries and guard dogs only aim at a specific point on an enemy": part models for the
 -- Heavy Devastators' shields, the Impaler, the Bile Titans, the Dragonroach, the tanks and their turrets, the
 -- emplacements and the Bunker Turret, the Factory Strider, the Vox Engine, the War Strider, the Scout Striders, the
@@ -650,7 +651,7 @@ do
       PARTS.units[unit] = { kind = kind, skel = false, retry = now() + 1, unit_tries = u and u.unit_tries, seen = now() }
       return false
     end
-    -- ((5.1.0 Test 1, the author's logs: "Harvester ... match no known skeleton" every Illuminate mission, while other
+    -- ((5.1.0 Test 1, my logs: "Harvester ... match no known skeleton" every Illuminate mission, while other
     -- Harvesters were judged by their parts fine - most likely one seen while it was still warping in, its bones not yet
     -- where they settle) a mismatch is looked at again 2 s later, 4 times, before the unit is judged by main armor for good.
     -- Test builds write where the check bones were (each kind once)
@@ -796,7 +797,7 @@ do
   end
   -- a short hold: a gun that could hurt an enemy keeps that answer for PARTS.HOLD (0.6 s) after its line last met a part it can hurt,
   -- so an enemy turning back and forth on the edge doesn't flip it every frame
-  -- ((5.0 Test 21, the author: sentries "dont seem to consistently aim at the rear of chargers" - Test 20 log: guns 8-15 m up,
+  -- ((5.0 Test 21, my note: sentries "dont seem to consistently aim at the rear of chargers" - Test 20 log: guns 8-15 m up,
   -- coming down on a Charger's back, the answer flipped Butt <-> Rear Armor Plates 123 times) 0.6 s, was 0.25 s
   PARTS.HOLD = 0.6
   -- true: the line meets a part it can't hurt (skip); false: one it can (fire); nil: it can't be worked out (the
@@ -923,7 +924,7 @@ local function cannot_hurt(dog, c, from, who, aim)
   local a = ARMOR[c.kind]
   if not a then return false end
   if a.sentries_skip and dog.sentry then return true end         -- dropships: no sentry shoots them
-  -- ((5.1.0 Test 1, the author: "guard dog should still fire short bursts at the heavy devastator, the point is
+  -- ((5.1.0 Test 1, my ask: "guard dog should still fire short bursts at the heavy devastator, the point is
   -- suppression"; "dont have any of the sentries hold fire on the heavy devastators, it should fire short bursts to keep
   -- them surpressed and then if its turned around it should go full auto") no gun skips a Heavy Devastator: the guns
   -- that fire short bursts (the Guard Dog, the machine gun and Gatling sentries) burst while its shield is in the way and

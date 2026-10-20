@@ -13,6 +13,10 @@ for _, d in ipairs({
   'void *SgdCreateFileW(const uint16_t *path, uint32_t access, uint32_t share, void *security, uint32_t disposition, uint32_t flags, void *tmpl) __asm__("CreateFileW");',
   'int SgdReadFile(void *file, void *buffer, uint32_t size, uint32_t *done, void *overlapped) __asm__("ReadFile");',
   'int SgdCloseHandle(void *handle) __asm__("CloseHandle");',
+  'void *SgdCreateFileA(const char *path, uint32_t access, uint32_t share, void *security, uint32_t disposition, uint32_t flags, void *tmpl) __asm__("CreateFileA");',
+  'int SgdWriteFile(void *file, const char *buffer, uint32_t size, uint32_t *done, void *overlapped) __asm__("WriteFile");',
+  'uint32_t SgdSetFilePointer(void *file, int32_t distance, int32_t *high, uint32_t method) __asm__("SetFilePointer");',
+  'int SgdSetEndOfFile(void *file) __asm__("SetEndOfFile");',
   'int32_t SgdBCryptOpenAlgorithmProvider(void **alg, const uint16_t *id, const uint16_t *impl, uint32_t flags) __asm__("BCryptOpenAlgorithmProvider");',
   'int32_t SgdBCryptCloseAlgorithmProvider(void *alg, uint32_t flags) __asm__("BCryptCloseAlgorithmProvider");',
   'int32_t SgdBCryptCreateHash(void *alg, void **hash, void *obj, uint32_t objlen, const void *secret, uint32_t secretlen, uint32_t flags) __asm__("BCryptCreateHash");',
@@ -37,7 +41,7 @@ do
     local f = io.open(dir .. '\\SmarterGuardDogsAndSentries.log', 'a')
     if f then f:close(); LOGDIR = dir else LOGDIR = base end
     CACHEDIR = LOGDIR
-    -- (4.6.4, the author's rule for every mod) numbered test builds write their logs into a 'test' folder inside the logs
+    -- (4.6.4, my rule for every mod) numbered test builds write their logs into a 'test' folder inside the logs
     -- folder, when that folder is there (Lua can't make folders without a console window, so it falls back to the logs
     -- folder). Releases - the release's Tester zip too - keep logging to the logs folder
     if TEST_BUILD then
@@ -96,6 +100,9 @@ local function write_log_to(f)
   f:write('started ' .. tostring(session.started) .. ', running for ' .. mmss(os.clock() - T0) .. '\n')
   for _, n in ipairs(startup_notes) do f:write(n .. '\n') end
   f:write('status: ' .. tostring(SGD.status) .. (SGD.dog and (' (' .. SGD.dog .. ')') or '') .. ', last action: ' .. tostring(last_reason) .. '\n')
+  -- ((5.1.5 Test 11) idling: what the mod is doing now, and how much of the time it had something to do)
+  local I = session.idle
+  if I and I.frames > 0 then f:write(string.format('now: %s; idle %d s so far; working frames %d of %d\n', I.working and 'working' or 'idle', math.floor(I.idle_s), I.work_frames, I.frames)) end
   f:write(string.format('health: polls=%d memory_writes=%d write_failures=%d read_errors=%d laser_frames=%d\n',
     stats.polls, stats.memory_writes, stats.write_failures, stats.read_errors, stats.laser_frames))
   if last_error then f:write('last error: ' .. tostring(last_error) .. '\n') end
@@ -129,12 +136,14 @@ local function write_log_to(f)
   table.sort(snames)
   for _, name in ipairs(snames) do
     local d = session.sentries[name]
-    f:write(string.format('  %-18s placed %d%s, out %s, with a target %.0f%% of that; safety stops %d (for a teammate %d%s%s%s), armor skips %d, priority switches %d%s%s%s%s%s%s%s%s\n',
-      name, d.placed, (d.max_out or 0) > 1 and string.format(' (up to %d out at once)', d.max_out) or '', mmss(d.out), d.out > 0 and 100 * d.targeted / d.out or 0, d.stops, d.mate_stops, (d.sentry_stops or 0) > 0 and string.format(', for a sentry %d', d.sentry_stops) or '', (d.seaf_stops or 0) > 0 and string.format(', for SEAF %d', d.seaf_stops) or '', (d.civ_stops or 0) > 0 and string.format(', for a civilian %d', d.civ_stops) or '', d.armour, d.priority or 0,
+    f:write(string.format('  %-27s placed %d%s, out %s, with a target %.0f%% of that; safety stops %d (for a teammate %d%s%s%s), armor skips %d, priority switches %d%s%s%s%s%s%s%s%s\n',
+      name .. (d.ai and string.format(' (AI %d)', d.ai) or ''), d.placed, (d.max_out or 0) > 1 and string.format(' (up to %d out at once)', d.max_out) or '', mmss(d.out), d.out > 0 and 100 * d.targeted / d.out or 0, d.stops, d.mate_stops, (d.sentry_stops or 0) > 0 and string.format(', for a sentry %d', d.sentry_stops) or '', (d.seaf_stops or 0) > 0 and string.format(', for SEAF %d', d.seaf_stops) or '', (d.civ_stops or 0) > 0 and string.format(', for a civilian %d', d.civ_stops) or '', d.armour, d.priority or 0,
       d.cooldowns and string.format(', cool-downs %d', d.cooldowns) or '',
       d.sentry_burst_done and string.format(', short bursts %d', d.sentry_burst_done) or '',
       d.sentry_spread and string.format(', set alight and moved on %d', d.sentry_spread) or '',
       d.sentry_out_of_sight and string.format(', dropped one out of sight %d', d.sentry_out_of_sight) or '',
+      d.sentry_behind_ground and string.format(', dropped one behind ground %d', d.sentry_behind_ground) or '',
+      d.sentry_no_damage and string.format(', dropped one it was not hurting %d', d.sentry_no_damage) or '',
       d.sentry_on_dropship and string.format(', left one still on a dropship %d', d.sentry_on_dropship) or '',
       d.sentry_out_of_reach and string.format(', dropped one out of reach %d', d.sentry_out_of_reach) or '',
       d.too_close and d.too_close > 0 and string.format(', an enemy inside its minimum range %s', mmss(d.too_close)) or '',
@@ -148,9 +157,46 @@ local function write_log_to(f)
     f:write('errors (first 10):\n')
     for _, e in ipairs(session.errors) do f:write('  ' .. e .. '\n') end
   end
+  -- ((5.1.5 Test 5) the damage check: whether it is armed, and how many health lookups found a record)
+  local H = session.health
+  if TESTER and H then
+    f:write(string.format('damage check (test): %s; health lookups %d, records found %d, odd values %d\n', H.off and 'off' or (H.proven and 'armed' or 'not armed yet (no health seen going down this mission)'),
+      H.reads, H.found, H.bad))
+    -- ((5.1.5 Test 6) how the drops turned out, per kind
+    for kind, T in pairs(H.tally or {}) do
+      f:write(string.format('  %s: %d dropped; meter moving %d, still %d, not readable %d; out of sight %d, someone in its line %d, ground over its line %d; next enemy hurt within 3 s %d (not %d); came back to it %d, hurt it at once %d; others hurt it while it was left alone %d\n',
+        kind, T.drops, T.meter_moving, T.meter_still, T.meter_unknown, T.unseen, T.mate, T.rise, T.next_hurt, T.next_none, T.back, T.back_hurt, T.others_hurt))
+    end
+  end
+  -- ((5.1.5 Test 18) every drop of the session, and what the ground map knew of the line at each 'not hurting' drop
+  if TESTER and session.drop_tally and next(session.drop_tally) then write_counts(f, 'drops (test): sentry, reason: enemy (whole session)', session.drop_tally) end
+  if TESTER and session.safety_tally and next(session.safety_tally) then write_counts(f, 'safety stops (test): sentry, why: enemy (whole session)', session.safety_tally) end
+  if TESTER and session.ground_tally and next(session.ground_tally) then write_counts(f, 'holds for ground in the way (test): sentry, height above its line, where that ground came from', session.ground_tally) end
+  if TESTER and session.nd_ground and next(session.nd_ground) then write_counts(f, 'not-hurting drops by what the ground map knew (test)', session.nd_ground) end
+  -- ((5.1.5 Test 30) frames the Autocannon or a mortar had a target but showed no marker, and why
+  if TESTER and session.mark_gaps and next(session.mark_gaps) then write_counts(f, 'marker gaps (test): frames with a target and no marker, by sentry and why', session.mark_gaps) end
+  -- ((5.1.5 Test 26) every sentry's place when it came out and went (the recent events scroll: these are kept, 40 at most)
+  if TESTER and session.places and #session.places > 0 then
+    f:write('sentry places (test):\n')
+    for _, l in ipairs(session.places) do f:write('  ' .. l .. '\n') end
+  end
+  -- ((5.1.5 Test 19) LuaJIT and this mod's code: the start lines it keeps giving up on (see engine_research.lua)
+  local J = TESTER and session.jitw
+  if J and J.starts > 0 then
+    f:write(string.format('compiling (test): %d traces started in this mod, %d compiled, %d given up; trace cache flushed %d times%s\n', J.starts, J.stops, J.aborts, J.flushes, J.stopped and ' (counted over the first 3,000 trace events of any mod)' or ''))
+    local lines = {}
+    for ln, n in pairs(J.bad) do if n > (J.ok[ln] or 0) then lines[#lines + 1] = ln end end
+    table.sort(lines, function(a, b) return J.bad[a] > J.bad[b] end)
+    for i = 1, math.min(25, #lines) do
+      local ln = lines[i]
+      f:write(string.format('  line %d: given up %d, compiled %d - %s\n', ln, J.bad[ln], J.ok[ln] or 0, J.why[ln] or '?'))
+    end
+  end
   if TESTER and session.timing and session.timing.n > 0 then
     local T = session.timing
     f:write(string.format('mod cost per frame (test): average %.3f ms, highest %.2f ms, over 1 ms in %d of %d frames\n', T.sum / T.n, T.max, T.over, T.n))
+    -- ((5.1.5 Test 19) how many sentry steps were full plans and how many the light step in between
+    if session.full_frames then f:write(string.format('  sentry steps (test): %d full plans, %d light (between plans)\n', session.full_frames, session.light_frames or 0)) end
     for _, Pt in ipairs(T.parts or {}) do
       if Pt.n > 0 then f:write(string.format('  %-28s %d times, average %.3f ms, highest %.2f ms, over 1 ms %d\n', Pt.name, Pt.n, Pt.sum / Pt.n, Pt.max, Pt.over)) end
     end
@@ -179,7 +225,7 @@ local function write_log()
   local ok, err = pcall(write_log_to, buf)
   if not ok then error(err, 0) end
   -- ((5.0 Test 9) test builds: the last game session's log is kept as -prev.log before this session's first write -
-  -- a restarted game wrote over the mission the author had just played)
+  -- a restarted game wrote over the mission I had just played)
   if (TEST_BUILD or TESTER) and not session.prev_kept then
     session.prev_kept = true
     pcall(function()
@@ -192,9 +238,25 @@ local function write_log()
       end
     end)
   end
+  local text = table.concat(parts, '', 1, n)
+  -- ((5.1.4, my ask: "lets make the log tweak") a 5.1.4 Tester log: each rewrite still ~3.6 ms on the game thread,
+  -- nearly all of it opening and closing the file (Windows checks a file as it is closed). Now the file is opened once
+  -- and kept open: each rewrite goes back to its start, writes, and cuts it to the new length. Others can still read
+  -- it. If anything about that fails, back to opening and closing it each time, as before)
+  local h = session.log_handle
+  if h == nil then
+    h = K32.SgdCreateFileA(LOGDIR .. '\\SmarterGuardDogsAndSentries.log', 0x40000000, 3, nil, 4, 0x80, nil)   -- (write; others may read and write; open or create)
+    if h == nil or ffi.cast('intptr_t', h) == -1 then h = false end
+    session.log_handle, session.log_done = h, ffi.new('uint32_t[1]')
+  end
+  if h then
+    if K32.SgdSetFilePointer(h, 0, nil, 0) ~= 0xFFFFFFFF and K32.SgdWriteFile(h, text, #text, session.log_done, nil) ~= 0
+      and session.log_done[0] == #text and K32.SgdSetEndOfFile(h) ~= 0 then return end
+    pcall(K32.SgdCloseHandle, h); session.log_handle = false
+  end
   local f = io.open(LOGDIR .. '\\SmarterGuardDogsAndSentries.log', 'w')
   if not f then return end
-  f:write(table.concat(parts, '', 1, n))
+  f:write(text)
   f:close()
 end
 
@@ -220,22 +282,41 @@ local u32, u64, f32
 do
   local cast = ffi.cast
   local PU8, PU32, PU64, PF32 = ffi.typeof('const uint8_t *'), ffi.typeof('const uint32_t *'), ffi.typeof('const uint64_t *'), ffi.typeof('const float *')
+  -- ((5.1.5 Test 18) the whole numbers from the string's own bytes: the pointer casts made a small throwaway object per
+  -- number whenever the code ran uncompiled - the most garbage of any one function in my big-fight sim)
+  local byte = string.byte
   u32 = function(s, o)
     if o + 4 > #s then ffi.copy(U32, s:sub(o + 1, o + 4), 4); return tonumber(U32[0]) end
-    return tonumber(cast(PU32, cast(PU8, s) + o)[0])
+    local a, b, c, d = byte(s, o + 1, o + 4)
+    return a + b * 256 + c * 65536 + d * 16777216
   end
   u64 = function(s, o)
     if o + 8 > #s then ffi.copy(U64, s:sub(o + 1, o + 8), 8); return tonumber(U64[0]) end
-    return tonumber(cast(PU64, cast(PU8, s) + o)[0])
+    local a, b, c, d, e, f, g, h = byte(s, o + 1, o + 8)
+    return (a + b * 256 + c * 65536 + d * 16777216) + (e + f * 256 + g * 65536 + h * 16777216) * 4294967296
   end
   -- (4.5) a float whose bits are an unusual NaN (0xffffffff, say: memory past the end of a list) came back from LuaJIT
   -- as nil, not as NaN, and a nil stopped the sentries in a Test 27 log: every such value is returned as a plain NaN
   local NAN = 0 / 0
+  -- ((5.1.5 Test 18) the float worked out from its four bytes too (sign, exponent, fraction), for the same reason
+  local ldexp = math.ldexp
   f32 = function(s, o)
+    if o + 4 > #s then
+      ffi.copy(F32, s:sub(o + 1, o + 4), 4)
+      local v = tonumber(F32[0])
+      if v == nil or v ~= v then return NAN end
+      return v
+    end
+    local a, b, c, d = byte(s, o + 1, o + 4)
+    local e = (d % 128) * 2 + (c >= 128 and 1 or 0)
+    local m = (c % 128) * 65536 + b * 256 + a
     local v
-    if o + 4 > #s then ffi.copy(F32, s:sub(o + 1, o + 4), 4); v = tonumber(F32[0])
-    else v = tonumber(cast(PF32, cast(PU8, s) + o)[0]) end
-    if v == nil or v ~= v then return NAN end
+    if e == 255 then
+      if m ~= 0 then return NAN end
+      v = math.huge
+    elseif e == 0 then v = ldexp(m, -149)
+    else v = ldexp(m + 8388608, e - 150) end
+    if d >= 128 then v = -v end
     return v
   end
 end
@@ -288,14 +369,22 @@ local function map_lookup(addr, key, max_capacity, header, soft)
   -- boxes it replaces cost an allocation per call when not compiled, and this runs per enemy per frame
   local mlo = mult % 65536
   local hash = (key * mlo + (key * ((mult - mlo) / 65536) % 65536) * 65536) % 4294967296
-  for i = 0, math.min(cap, 128) - 1 do
-    local e = rd(slots + 8 * bit.band(hash + i, cap - 1), 8, 'map slot')
-    local k = u32(e, 0)
-    if k == key then
-      local v = u32(e, 4)
-      return v ~= 4294967295 and v or nil
+  -- ((5.1.5 Test 18) four slots a read where they run on without wrapping round: a look-up needed 1.6 reads on average
+  -- in my big-fight sim, now about one - these run for every sentry, the dog and the health check each frame)
+  local i, n = 0, math.min(cap, 128)
+  while i < n do
+    local j = bit.band(hash + i, cap - 1)
+    local w = (j + 4 <= cap and i + 4 <= n) and 4 or 1
+    local e = rd(slots + 8 * j, 8 * w, 'map slot')
+    for q = 0, w - 1 do
+      local k = u32(e, q * 8)
+      if k == key then
+        local v = u32(e, q * 8 + 4)
+        return v ~= 4294967295 and v or nil
+      end
+      if k == empty then return nil end
     end
-    if k == empty then return nil end
+    i = i + w
   end
   if soft then return nil end
   error({ Abort, 'map probe' }, 0)
@@ -323,7 +412,7 @@ for h, n in pairs({
   ['856e9710e45e760f'] = 'Trooper (jump pack, melee)', d37e8d120d2836e3 = 'Factory Strider',
   d1e990baf22d5a52 = 'Predator Stalker', ['883401af2a98a5f6'] = 'Predator Hunter',
 }) do LABELS[type_hash(h)] = n end
--- ((5.0 Test 18, the author: the Rover "was avoiding a predator strain stalker") enemies that cloak: while cloaked the game marks
+-- ((5.0 Test 18, my note: the Rover "was avoiding a predator strain stalker") enemies that cloak: while cloaked the game marks
 -- them out of its line of sight, so the cover rule (no firing into walls) hid them - a Stalker closing in on you left alone.
 -- They count as in sight (read_candidates)
 SGD.cloaks = { [type_hash('f540ca9d9d4a422e')] = true, [type_hash('d1e990baf22d5a52')] = true }   -- Stalker, Predator Stalker
@@ -353,13 +442,16 @@ for h, n in pairs({
   f79cd8bb654397df = 'Alpha Commander', fb9937035d652c43 = 'Scout Strider pilot', ['4d1c334d294dfa97'] = 'Helldiver',
   -- (4.5, Codex check) the Illuminate's weapons and the Crusher's cleaver are entries of their own
   ['9c7ef47a463d5327'] = 'Overseer (lightspear)', ['0cf9b9b95edfef81'] = 'Elevated Overseer (rifle)',
-  ['705362ad578943f6'] = 'Crescent Overseer (gun)', ['258bd988cd66c94b'] = 'Crusher (cleaver)'
+  ['705362ad578943f6'] = 'Crescent Overseer (gun)', ['258bd988cd66c94b'] = 'Crusher (cleaver)',
+  -- ((5.1.5 Test 25) unnamed in my Test 24 log, named from the game's entities (hd2api))
+  ['089833d2880d9e06'] = 'MG Raider', ['82a87ad8d595b2ba'] = 'Pyro Trooper', ['09dfb04b2e578bc3'] = 'Trooper',
+  e683d2ca5618d74a = 'Raider', ['1b5b9ac4f96b36e5'] = 'Commissar'
 }) do LABELS[type_hash(h)] = n end
 local DOGS = {
   { name = 'Rover', pack = type_hash('af9b683ccb6ddc02'), drone = type_hash('5beec97f4c7f4ae9'), laser = true,
     fast = true, radius = 0.35, safety_keep = 0.4, linger = 0.3, range = 35,
     gun = type_hash('2c66c201b2543d2c'), barrel = { 2, 1 } },   -- (4.5.3: its laser comes out of its barrel too, a tester's call)
-    -- ((5.0 Test 5, the author: "the beam should follow where the actual gun is turned like an actual laser mount")
+    -- ((5.0 Test 5, my ask: "the beam should follow where the actual gun is turned like an actual laser mount")
     -- barrel: its muzzle part's axis 2, forward - the axis Test 17 kept finding - followed as it is, sweep and all,
     -- with no learning and no dropping; the old beam_to_aim (muzzle to the game's aim point) is gone)
     -- (4.5.3 Test 17: gun = its weapon's own entity, from a tester's Test 15 log; beam_to_aim: its muzzle part twists as
@@ -385,6 +477,7 @@ for _, d in ipairs(DOGS) do DOG_BY_PACK[d.pack] = d end
 -- the Gatling is hellpod/turret/gatling_turret) and checked against its AI behavior id where known.
 --  line/spread: how far (meters) a shot line must stay from a body, plus this much per meter from the muzzle
 --  splash: the shot explodes; nobody may stand within this many meters of the enemy
+--  splash_heavy: ((5.1.5 Test 34) the Autocannon) a heavy (AV4+) is fired on even with a sentry inside 'splash' of it
 --  min_range: it can't fire while an enemy is this close to it (meters; the rocket sentry, 10 m per the wiki): a red
 --  ring of that radius flashes around it meanwhile
 --  blast: mortars lob shells in an arc, so there is no line to check; nobody may stand within this of the enemy
@@ -416,12 +509,18 @@ for _, d in ipairs(DOGS) do DOG_BY_PACK[d.pack] = d end
 local SENTRIES = {
   { name = 'Machine Gun Sentry', type = type_hash('37cde43876ba26bb'), ai = 312, line = 0.45, spread = 0.01, sweep = true, barrel_axis = 2, pen = 3, bursts = true, reach = 75, prefer = 'light' },
   { name = 'Gatling Sentry', type = type_hash('ef85d6cf58e31d70'), ai = 213, line = 0.5, spread = 0.015, sweep = true, barrel_axis = 2, pen = 3, bursts = true, loss_time = true, reach = 75, prefer = 'light', air_first = true },
-  { name = 'Autocannon Sentry', type = type_hash('54d86057f5dacfb9'), ai = 5, line = 0.45, spread = 0.005, splash = 2.0, prefer = 'heavy', air_first = true, hits_carried = true, laser_at_enemy = true, laser_axis = 2, salvo = true },   -- (type confirmed in game; unit hellpod/autocannon_turret/autocannon_turret)
-  { name = 'Rocket Sentry', type = type_hash('37079568dc86e9c6'), ai = 611, line = 0.6, spread = 0.01, splash = 4.5, min_range = 10, prefer = 'heavy', air_first = true, hits_carried = true, laser_at_enemy = true, laser_axis = 2,
+  -- ((5.1.5 Test 10 wiki check, my ask: "fact check all of the sentries and mortars") Autocannon: its shell's explosion
+  -- (APHE_40mm, 150 damage) reaches 6 m (radius 2 / 6 / 8: full damage, damage ends, push), so 'splash' 6 (was 2); its
+  -- shell is armor penetration 5 and the Rocket's too, so 'pen' 5 for both: they leave the Hive Lord's mandibles (AV6) alone
+  -- (were 'shoot everything'). Range 100 m (its own wiki page; the Gas Mortar page's '75m' for it is wrong)
+  { name = 'Autocannon Sentry', type = type_hash('54d86057f5dacfb9'), ai = 5, line = 0.45, spread = 0.005, splash = 6.0, splash_heavy = true, pen = 5, prefer = 'heavy', air_first = true, hits_carried = true, laser_at_enemy = true, laser_axis = 2, salvo = true,
+    barrel_from = 21, barrel_node = 27, barrel_len = 1.81 },   -- (type confirmed in game; unit hellpod/autocannon_turret/autocannon_turret) ((5.1.5 Test 29) its barrel: gun housing part 21 -> muzzle part 27, 1.81 m, from the game model aa_turret)
+  -- (wiki check: 100 m, 10 m minimum, its rockets' explosion reaches 4 m: 'splash' 4.5 stays)
+  { name = 'Rocket Sentry', type = type_hash('37079568dc86e9c6'), ai = 611, line = 0.6, spread = 0.01, splash = 4.5, pen = 5, min_range = 10, prefer = 'heavy', air_first = true, hits_carried = true, laser_at_enemy = true, laser_axis = 2, axis_confirmed = true,
     salvo_node = 13 },   -- (mid-salvo it ignores being asked to choose again)
   -- (heat: the wiki says it heats 8 degrees a second while firing, burns out at 250 and cools 3.8-7.5 a second; in game it
   -- overheated after about 28 s on targets, so the estimate uses 11 a second. The game's own heat meter is used when found)
-  { name = 'Laser Sentry', type = type_hash('56070f36cfffa8a8'), ai = 308, line = 0.35, spread = 0.002, sweep = true, barrel_axis = 2, pen = 4, heat = { cap = 250, rate = 11, cool = 3.8 },
+  { name = 'Laser Sentry', band = true, type = type_hash('56070f36cfffa8a8'), ai = 308, line = 0.35, spread = 0.002, sweep = true, barrel_axis = 2, pen = 4, heat = { cap = 250, rate = 11, cool = 3.8 },
     reach = 50, prefer = 'light', air_first = true, spreads_fire = true, fire_node = 13 },   -- (ours runs along its barrel, over its own beam, turning with it)
   { name = 'Flame Sentry', type = type_hash('820cc3bafe962858'), ai = 207, line = 1.0, spread = 0.03, splash = 2.5, sweep = true,
     range = 30, prefer = 'near', spreads_fire = 'keep', barrel_min = 0.95 },   -- ('range' = meters from its muzzle: 4.5.2 set 20, a tester's call as the game let it pick
@@ -441,20 +540,38 @@ local SENTRIES = {
   -- (4.6.5 Sentry Safety, 'sentry_blast': how far its shells must land from a sentry - the Mortar's explosion does 400 out to
   -- 3 m, fading to nothing at 9 m (a sentry has 400-600 health); the EMS Mortar's does 150 out to 1 m, nothing past 2 m, its
   -- stun field does no damage)
-  { name = 'Mortar Sentry', type = type_hash('51a0812e3bce2d74'), ai = 322, blast = 13, sentry_blast = 7, no_laser = true },   -- (AI 322 in game, Test 27 log)
-  { name = 'EMS Mortar Sentry', type = type_hash('b2053a1838092f8b'), ai = 324, blast = 12, sentry_blast = 2.5, no_laser = true },   -- (AI 324 in game, Test 28 log)
+  -- ((5.1.5 Test 9) reach 125: the wiki's "potential maximum targeting range of 125-meters" for the mortars (Gas Mortar
+  -- page), used for where their markers show; their markers show like every sentry's now - no laser, my ask:
+  -- "Mortars should draw markers. Just not lasers")
+  { name = 'Mortar Sentry', type = type_hash('51a0812e3bce2d74'), ai = 322, reach = 125, blast = 13, sentry_blast = 7, no_laser = true },   -- (AI 322 in game, Test 27 log)
+  -- ((5.1.5 Test 10 wiki check) its static field's damage (150) reaches 3 m (radius 1 / 2 / 3): 'sentry_blast' 3 (was 2.5))
+  { name = 'EMS Mortar Sentry', type = type_hash('b2053a1838092f8b'), ai = 324, reach = 125, blast = 12, sentry_blast = 3, no_laser = true },   -- (AI 324 in game, Test 28 log)
+  -- ((5.1.5 Test 8) the A/GM-17 Gas Mortar Sentry, the mortar's unit with its own entity (299c0d3dfd2f0994, the game's
+  -- data): gas shells, a 7 m cloud (wiki attack data A/GM-17_P_IE, Gas + Gas_Confusion, no damage of its own) that
+  -- lingers, so 'blast' 10 m from a helldiver; its shell does 20 on impact, so 'sentry_blast' 2.5 m as the EMS Mortar's.
+  -- Its AI id isn't confirmed in game: the game data puts its behavior between the Mortar's and the EMS Mortar's, so
+  -- 323 (the Mortar runs 322, the EMS Mortar 324). ((5.1.5 review) the game's AI dispatch table doesn't tell 319-324
+  -- apart (separate but alike handlers), and its entity type is its own, so any of the mortar family's ids 319-324 is
+  -- taken; the log's 'out (AI n)' line says which it runs)
+  { name = 'Gas Mortar Sentry', type = type_hash('299c0d3dfd2f0994'), ai = 323, ais = { [319] = true, [320] = true, [321] = true, [322] = true, [323] = true, [324] = true }, reach = 125, blast = 10, sentry_blast = 2.5, no_laser = true },
   -- (5.0) the guns that come with a resupply pod (Armed Resupply Pods booster) and on the M-103 Supply FRV: both an
   -- automatic AR-23P Liberator Penetrator (medium armor penetration, 640 rpm, ~120-140 rounds, 30 m), run on the Gatling's
   -- AI template. Types from a 4.0.6 Test 8 log (AI 213 and 212); their units are unnamed, found in the resupply pod's
   -- archive (263277e5added56c, with the ammo rack) and the Supply FRV's (149f685717737cae). Treated like the machine gun:
   -- skips armor it can't hurt (saving its rounds), short bursts at Heavy Devastators, unarmored enemies first. 'ais':
   -- either of the Gatling template's two ids is accepted. The FRV's gun moves with the vehicle and fires past its driver
-  { name = 'Resupply Pod Gun', mount = true, type = type_hash('73681ffd58fa1a90'), ai = 213, ais = { [212] = true, [213] = true }, line = 0.45, spread = 0.01, sweep = true, barrel_axis = 2, pen = 3, bursts = true, loss_time = true, reach = 75, prefer = 'light',
-    turn_hold = 30, beam_inset = 0 },   -- (4.6.2: as the Supply FRV gun, whose AI it runs - turns to an enemy far round without firing;
+  { name = 'Resupply Pod Gun', mount = true, type = type_hash('73681ffd58fa1a90'), ai = 213, ais = { [212] = true, [213] = true }, line = 0.45, spread = 0.01, sweep = true, barrel_axis = 2, pen = 3, bursts = true, loss_time = true, reach = 30, prefer = 'light',
+    turn_hold = 30, beam_inset = 0 },   -- ((5.1.5 Test 8, my note: the pod gun "should be almost identical to the Supply FRV
+    -- Turret") the same gun and settings as the Supply FRV gun below. ((5.1.5 Test 9, my ask: "The supply frv and resupply
+    -- pod range of 75m doesnt seem accurate") reach 30 m for both: the wiki's Armed Resupply Pods page - its gun "targets and
+    -- shoots at any non-Helldiver hostiles within 30 metres" - and the Supply FRV's, whose turret is "similar to that of the
+    -- Armed Resupply Pods turret". The 4.6.4 review's 75 m was the Machine Gun Sentry's, wrongly given to these two too.
+    -- Only what comes from the vehicle differs (vehicle, laser_when_firing)
+    -- (4.6.2: as the Supply FRV gun, whose AI it runs - turns to an enemy far round without firing;
     -- 5.1.1: the same gun model as the FRV's, its fire node at the barrel's tip - beam_inset 0, see add_beam)
   -- (4.5: barrel_axis 2 like the Gatling's, whose AI they run on: a Test 28 log found axis 2+ at 0.987 on the FRV gun;
   -- learning it on a moving vehicle failed as often as not)
-  { name = 'Supply FRV Gun', type = type_hash('4df41f84668d07fb'), ai = 212, ais = { [212] = true, [213] = true }, line = 0.45, spread = 0.01, sweep = true, barrel_axis = 2, pen = 3, bursts = true, loss_time = true, reach = 75, prefer = 'light',
+  { name = 'Supply FRV Gun', type = type_hash('4df41f84668d07fb'), ai = 212, ais = { [212] = true, [213] = true }, line = 0.45, spread = 0.01, sweep = true, barrel_axis = 2, pen = 3, bursts = true, loss_time = true, reach = 30, prefer = 'light',
     vehicle = true, laser_when_firing = true, turn_hold = 30, beam_inset = 0 },   -- (test builds log where its riders sit relative to it and to its line of fire)
     -- (turn_hold, 4.6.2, a tester: it wasted ammo swinging from one enemy to the next while firing - after a kill, the
     -- next enemy more than this many degrees off its barrel is turned to without firing; see engine_sentry.lua)

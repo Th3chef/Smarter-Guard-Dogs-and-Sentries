@@ -236,6 +236,15 @@ local function resolve_layout()
       note('game.dll ' .. gsha:sub(1, 16) .. '  exe ' .. esha:sub(1, 16))
     end
   end
+  -- ((5.1.5 Test 18, test builds) whether the game's Lua compiles mod code or only interprets it: it decides what
+  -- costs the most in a big fight (uncompiled, every small throwaway object counts)
+  if TESTER then
+    local okj, j = pcall(function() return rawget(_G, 'jit') or require('jit') end)
+    if okj and type(j) == 'table' then
+      local okst, on = pcall(j.status)
+      note(string.format('lua (test): %s, compiler %s', tostring(j.version), okst and (on and 'on' or 'off') or 'unknown'))
+    else note('lua (test): no jit library') end
+  end
   if L then
     note('layout: cached scan of this game version')
   elseif gsha == KNOWN.dll_hash and esha == KNOWN.exe_hash then

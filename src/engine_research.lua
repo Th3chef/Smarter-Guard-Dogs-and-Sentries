@@ -42,7 +42,68 @@ end
 
 -- F8 marker (only if the engine's keyboard functions are available): notes in the status log what the dog is
 -- aiming at right now and which enemy types are around, so a player can point out an enemy for a bug report
-function hexr(s) return (s:reverse():gsub('.', function(c) return string.format('%02x', c:byte()) end)) end
+-- ((5.1.5 Test 19) remembered per string, and no new function each time: the logs ask for the same few enemy types
+-- over and over, and making a function per call stopped LuaJIT compiling every path that named an enemy)
+do
+  local HEXR, n = {}, 0
+  local function hexr_byte(c) return string.format('%02x', c:byte()) end
+  function hexr(s)
+    local h = HEXR[s]
+    if h then return h end
+    h = (s:reverse():gsub('.', hexr_byte))
+    if n < 2000 then HEXR[s], n = h, n + 1 end
+    return h
+  end
+end
+
+-- ((5.1.5 Test 19, test builds) where LuaJIT gives up compiling this mod's code: every trace started in this file,
+-- counted by the line it started on - compiled or given up, and why. The summary lists the lines that keep failing
+-- (the loader's log only names the file). Trace events are rare once the game is warmed up; the counting is a few
+-- table updates per event
+if TESTER then
+  pcall(function()
+    local jit_ = rawget(_G, 'jit') or require('jit')
+    local util = require('jit.util')
+    local okv, vmdef = pcall(require, 'jit.vmdef')
+    local own = debug.getinfo(1, 'S').source
+    local J = { ok = {}, bad = {}, why = {}, starts = 0, aborts = 0, stops = 0, flushes = 0 }
+    session.jitw = J
+    local start_line, events, watcher = nil, 0, nil
+    -- ((5.1.5 Test 20) it lets go after 3,000 trace events - plenty for the list, and then nothing of mine sits in
+    -- the compiler's way: the loader keeps its own watcher on it)
+    watcher = function(what, tr, func, pc, otr, oex)
+      events = events + 1
+      if events >= 3000 then J.stopped = true; pcall(jit_.attach, watcher); return end
+      if what == 'flush' then J.flushes = J.flushes + 1; return end
+      if what == 'start' then
+        local fi = util.funcinfo(func, pc)
+        start_line = (fi and fi.source == own) and fi.currentline or nil
+        if start_line then J.starts = J.starts + 1 end
+        return
+      end
+      if not start_line then return end
+      if what == 'stop' then J.stops = J.stops + 1; J.ok[start_line] = (J.ok[start_line] or 0) + 1
+      elseif what == 'abort' then
+        J.aborts = J.aborts + 1
+        J.bad[start_line] = (J.bad[start_line] or 0) + 1
+        if not J.why[start_line] then
+          local msg = otr
+          if type(otr) == 'number' and okv and vmdef.traceerr[otr] then
+            local info = oex
+            if type(info) == 'function' then local f2 = util.funcinfo(info); info = f2 and (f2.source .. ':' .. (f2.linedefined or 0)) or '?' end
+            local fmt = vmdef.traceerr[otr]
+            if fmt == 'NYI: bytecode %s' and type(oex) == 'number' then info = vmdef.bcnames:sub(6 * oex + 1, 6 * oex + 6) end
+            local okf, m = pcall(string.format, fmt, info)
+            msg = okf and m or fmt
+          end
+          local fe = util.funcinfo(func, pc)
+          J.why[start_line] = tostring(msg) .. ((fe and fe.source == own) and (' at line ' .. (fe.currentline or 0)) or '')
+        end
+      end
+    end
+    jit_.attach(watcher, 'trace')
+  end)
+end
 function check_marker(st)
   local KB = SR and SR.Keyboard
   if research.key == nil then
@@ -82,6 +143,11 @@ function check_marker(st)
     msg = msg .. string.format('\n      dog: AI step %d, target %d for %.1fs, lined up %.1fs on it without firing, timer %.2fs, %.1f m from you (level)',
       st.node, st.target, st.target_for or 0, st.lineup_acc or 0, math.max(0, (st.deadline or 0) - (st.now or 0)) / 1e6,
       (me and D) and math.sqrt((D[1] - me[1]) ^ 2 + (D[2] - me[2]) ^ 2) or -1)
+    -- ((5.1.5 Test 5) its target's health as the game holds it)
+    if st.target ~= 0 then
+      local hp, mx = HEALTH.of(st.target)
+      msg = msg .. (hp and string.format(', target health %d of %d%s', hp, mx, HEALTH.proven and '' or ' (damage check not armed yet)') or ', target health record not found')
+    end
     local tm = {}
     for _, m in ipairs(st.mates or {}) do
       tm[#tm + 1] = me and string.format('%.1f m', math.sqrt((m[1] - me[1]) ^ 2 + (m[2] - me[2]) ^ 2 + (m[3] - me[3]) ^ 2)) or '?'

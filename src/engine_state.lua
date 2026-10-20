@@ -6,7 +6,12 @@ local A   -- absolute layout, set at start-up
 
 -- (4.6.3) the names other files use are declared here; the rest of this file sits in a do-block so its own
 -- helpers stop counting toward Lua's 200 locals of the main chunk once the file ends
-local is_local, unit_position, team, team_wanted, OPT, FRAME, teammates, team_detail, GROUPS, SINGLES, find_player, read_candidates, in_mission, read_state, PERC, loss_cut   -- ((4.6.6 review) loss_cut: was a global)
+local is_local, unit_position, team, team_wanted, OPT, FRAME, teammates, team_detail, GROUPS, SINGLES, find_player, read_candidates, in_mission, read_state, PERC, loss_cut, HEALTH, IDLE   -- ((4.6.6 review) loss_cut: was a global)
+-- ((5.1.5 Test 5) HEALTH: the game's health records, for the damage check of the sentries and dogs (below))
+-- ((5.1.5 Test 11) IDLE: the mod idling while it has nothing to do (my ask: "If a guard dog is put away and there
+-- are no deployed sentries, the mod shouldnt run. If there are no enemies within 150, then the mod shouldnt run as no
+-- sentry/dog can engage at that range"): one cheap look every 0.25 s instead, see near_hostile, dog_peek (below), the
+-- sentries' sleep in sentry_tick and the main loop
 do
 function is_local(entity) return bit.band(entity:byte(21), 3) == 1 end
 
@@ -248,19 +253,26 @@ local function locate()
   local n = u32(rd(backpacks + 16, 4, 'backpack count'), 0)
   need(n <= 256, 'backpack count')
   local packs, drones = rptr(backpacks + 56, 'backpack list'), rptr(backpacks + 80, 'backpack drones')
-  local dog, drone_index
+  local dog, drone_index, pack_i, pack_p
   for i = 0, n - 1 do
-    local pe = read(ptr_of(read(packs + i * 8, 8), 0) or 0, 24)
+    local pp = ptr_of(read(packs + i * 8, 8), 0)
+    local pe = read(pp or 0, 24)
     if pe and u32(pe, 8) == pack_id then
       dog = DOG_BY_PACK[pe:sub(1, 8)]
       if not dog then return nil, 'backpack is not a supported dog' end
       if not is_local(pe) then return nil, 'backpack is not ours' end
       drone_index = u32(rd(drones + i * 8, 8, 'backpack drone'), 4)
+      pack_i, pack_p = i, pp
       break
     end
   end
   if not dog then return nil, 'no backpack worn' end
-  if not drone_index or drone_index == 32767 then return nil, 'dog not deployed' end
+  if not drone_index or drone_index == 32767 then
+    -- ((5.1.5 Test 11) where its drone will show when it is launched: looked at every 0.25 s while it is put away)
+    IDLE.pack = pack_i and { packs + pack_i * 8, pack_p, drones + pack_i * 8 } or nil
+    return nil, 'dog not deployed'
+  end
+  IDLE.pack = nil
 
   local attachments = global('attachments')
   local at = map_lookup(attachments + 32, pack_id, 8192)
@@ -274,18 +286,26 @@ local function locate()
   need(tb <= ta and ta <= tn and tn <= 8192, 'targeting registry')
   local tents, tstates = rptr(targeting + 360, 'targeting entities'), rptr(targeting + 376, 'targeting states')
   local slot_i, drone_ptr, drone_ent
-  for i = 0, tn - 1 do
-    local p = ptr_of(read(tents + i * 8, 8), 0)
+  local function try(i, p)
     local de = p and read(p, 24)
-    if de and de:sub(1, 8) == dog.drone and u32(de, 16) == drone_index then
-      if not is_local(de) then return nil, 'dog is not ours' end
-      slot_i, drone_ptr, drone_ent = i, p, de
-      break
-    end
+    if de and de:sub(1, 8) == dog.drone and u32(de, 16) == drone_index then slot_i, drone_ptr, drone_ent = i, p, de; return true end
   end
+  -- ((5.1.5 Test 11) the slot it had at the last look first (from its id in the targeting map): this look runs every
+  -- 0.25 s while the dog is out, and walked the whole agent list - two reads an agent, hundreds in a big fight - each time)
+  local last = IDLE.drone
+  if last and last.index == drone_index then
+    local i = map_lookup(targeting + 336, last.id, 16384)
+    if i and i < tn then try(i, ptr_of(read(tents + i * 8, 8), 0)) end
+  end
+  if not slot_i and tn > 0 then
+    local ptrs = rd(tents, 8 * tn, 'targeting entities')   -- (one read for the whole list)
+    for i = 0, tn - 1 do if try(i, ptr_of(ptrs, i * 8)) then break end end
+  end
+  if slot_i and not is_local(drone_ent) then return nil, 'dog is not ours' end
   if not slot_i then return nil, 'dog has no targeting' end
   local drone_id, drone_unit = u32(drone_ent, 8), u32(drone_ent, 12)
   need(map_lookup(targeting + 336, drone_id, 16384) == slot_i, 'targeting slot')
+  IDLE.drone = { id = drone_id, index = drone_index }
 
   local bi = map_lookup(behaviours + 64, drone_id, 32768)
   if not bi then return nil, 'dog has no AI record' end
@@ -420,13 +440,19 @@ local function locate()
     dog = dog, key = me:sub(1, 20) .. pack_id .. drone_ent:sub(1, 20), team_key = me:sub(1, 20), rec_addr = rec_addr, want = want_behaviour,
     drone_id = drone_id, drone_unit = drone_unit, player_unit = player_unit, tstate = tstates + slot_i * 208, owners = owners,
     fire_nodes = fire_nodes, wr_addr = wr_addr, fire_unit = fire_nodes and fire_unit,
-    pbase = pbase, registry = global('registry'), clock = rptr(g.clock, 'clock'),
+    pbase = pbase, registry = global('registry'), clock = rptr(g.clock, 'clock'), bi = bi, pi = pi,
   }
 end
 
 local ctx, ctx_until = nil, 0
 local reg_rows = {}   -- registry index -> entity row address (re-checked on every read)
-local reg_frame, reg_seen = -1, {}   -- enemies already looked up this frame
+local reg_frame, reg_seen = -1, {}   -- enemies already looked up this frame (id -> its row, or false)
+-- ((5.1.5 Test 18) an enemy's place in the registry map, kept a while (ix: id -> { index, until frame }): the map was
+-- looked up afresh for every enemy every frame - over a third of all the mod's reads in my big-fight sim. Its row is
+-- still read each frame (still it, still there), and the map asked again after 'keep' frames or as soon as the row
+-- isn't it any more. 'fresh': ids looked up in the map this frame. The map's header and row list: once a frame
+-- (one table: the main chunk is near LuaJIT's 200 locals)
+local REG = { ix = {}, n = 0, keep = 24, fresh = {}, hf = -1, gone = {}, gn = 0, pos = {} }
 
 -- the enemies one AI agent (a dog or a sentry) is currently considering, from its perception record. 'origin' is
 -- where distances (d2) are measured from. Also returns the raw record, for the research log.
@@ -442,8 +468,20 @@ do
   pread = function(addr)
     return K32.SgdReadProcessMemory(PROCESS, ffi.cast(PV, addr), PBUF, PERC_N, DONE) ~= 0 and DONE[0] == PERC_N
   end
-  bu32 = function(o) return tonumber(ffi.cast(PU32p, PBUF + o)[0]) end
-  bf32 = function(o) local v = tonumber(ffi.cast(PF32p, PBUF + o)[0]); if v == nil or v ~= v then return NAN end; return v end
+  -- ((5.1.5 Test 18) through typed views of the buffer made once: indexing them gives a plain number, where the
+  -- pointer sums before made a small throwaway object per number whenever the code wasn't compiled - every field of
+  -- every enemy in every sentry's list, every frame. Every offset read here is a multiple of 4; any other goes the old way)
+  local V32, VF = ffi.cast(PU32p, PBUF), ffi.cast(PF32p, PBUF)
+  bu32 = function(o)
+    if o % 4 == 0 then return V32[o / 4] end
+    return tonumber(ffi.cast(PU32p, PBUF + o)[0])
+  end
+  bf32 = function(o)
+    local v
+    if o % 4 == 0 then v = VF[o / 4] else v = tonumber(ffi.cast(PF32p, PBUF + o)[0]) end
+    if v == nil or v ~= v then return NAN end
+    return v
+  end
 end
 -- ((4.6.4 release review) the same buffer for the Tesla Tower's pass right after the game's update (sentry_after),
 -- which made a new 5 KB string every frame while a tower was out)
@@ -451,7 +489,36 @@ PERC = { read = function(addr) return pread(addr) end, u32 = function(o) return 
 
 -- ((4.6.4 release review) 'want_header': the 264-byte faction list at its start as a string - only the Tesla Tower
 -- uses it; every other dog and sentry skipped making it each frame)
-function read_candidates(pbase, origin, registry, want_header)
+-- ((5.1.5 Test 18) 'pool' (a sentry's): its candidate entries are reused from two frames back instead of made anew.
+-- They were most of the mod's garbage in a big fight - one table per enemy per sentry per frame, ~350 a frame with 8
+-- sentries and 40 enemies. Two sets taken in turn, so last frame's list (its 'st', which the beams and a failed read
+-- fall back on) is never written over. Every field is set on each use; 'pos' stays a fresh table, as places are kept
+-- (the mortar's landing spot, the laser's ends)
+-- ('fresh': the id of its current target, whose place in the map is always looked up afresh: the dead-target rules
+-- lean on an enemy dropping out of the registry the frame it does)
+-- ((5.1.5 Test 31) an entity's registry row by its id (nil if it isn't there): for a sentry's target that isn't in its own
+-- list - my Test 30 log had mortars and the Autocannon on targets missing from their lists for 1,435 frames, so no marker)
+function entity_row(registry, id)
+  if not (registry and id and id ~= 0) then return nil end
+  if REG.hf ~= FRAME or REG.hr ~= registry then
+    REG.head = rd(registry + 73808, 20, 'registry map')
+    REG.list = ptr_of(read(registry + 73832, 8), 0)
+    REG.hf, REG.hr = FRAME, registry
+  end
+  local ri = map_lookup(registry + 73808, id, 32768, REG.head, true)
+  if not ri or ri >= 16384 then return nil end
+  local rp = reg_rows[ri]
+  local re = rp and read(rp, 24)
+  if not (re and u32(re, 8) == id) then
+    rp = REG.list and ptr_of(read(REG.list + ri * 8, 8), 0)
+    re = rp and read(rp, 24)
+    if re then reg_rows[ri] = rp end
+  end
+  if re and u32(re, 8) == id then return re end
+  return nil
+end
+function read_candidates(pbase, origin, registry, want_header, pool, fresh)
+  if pbase == 'forget' then REG.ix, REG.n, REG.gone, REG.gn = {}, 0, {}, 0; return end   -- ((5.1.5 Test 18) a mission's end: ids start over
   need(type(pbase) == 'number' and pbase >= 65536 and pread(pbase), 'perception record')
   local fcount = bu32(0)
   need(fcount <= 32, 'faction filter')
@@ -462,9 +529,20 @@ function read_candidates(pbase, origin, registry, want_header)
     filter = bit.bor(filter, bit.lshift(1, f))
   end
 
-  local reg_head = rd(registry + 73808, 20, 'registry map')
-  local reg_list = ptr_of(read(registry + 73832, 8), 0)
-  local candidates = {}
+  if REG.hf ~= FRAME or REG.hr ~= registry then
+    REG.head = rd(registry + 73808, 20, 'registry map')
+    REG.list = ptr_of(read(registry + 73832, 8), 0)
+    REG.hf, REG.hr = FRAME, registry
+  end
+  local reg_head, reg_list = REG.head, REG.list
+  local candidates, items, pk
+  if pool then
+    -- (the set not handed out last time; it only counts as handed out once this read gets through)
+    pk = pool.k == 1 and 2 or 1
+    candidates, items = pool[pk], pool[pk + 2]
+    if not candidates then candidates, items = {}, {}; pool[pk], pool[pk + 2] = candidates, items end
+    for i = #candidates, 1, -1 do candidates[i] = nil end
+  else candidates = {} end
   local function add(off, group)
     local id = bu32(off)
     if id == 0 then return end
@@ -472,11 +550,34 @@ function read_candidates(pbase, origin, registry, want_header)
     need(score == score and math.abs(score) < 100000, 'candidate score')
     local alive, ent = false, nil
     -- (the dog and every sentry mostly see the same enemies: each is looked up once per frame)
-    if reg_frame ~= FRAME then reg_frame, reg_seen = FRAME, {} end
+    if reg_frame ~= FRAME then reg_frame, reg_seen, REG.fresh, REG.pos = FRAME, {}, {}, {} end
     local known = reg_seen[id]
-    if known then alive, ent = known[1], known[2] or nil
+    if known ~= nil and (id ~= fresh or REG.fresh[id]) then alive, ent = known ~= false, known or nil
     else
-      local ri = map_lookup(registry + 73808, id, 32768, reg_head, true)
+      local kx = REG.ix[id]
+      local ri
+      if kx and FRAME < kx[2] and id ~= fresh then ri = kx[1]
+      -- (one the game itself has down as dead and the map didn't have: not asked again for a while - the dead stay
+      -- listed ~1 s, and were each looked up every frame)
+      elseif REG.gone[id] and FRAME < REG.gone[id] and bit.band(flags, 1) == 0 then ri = nil
+      else
+        REG.fresh[id] = true
+        ri = map_lookup(registry + 73808, id, 32768, reg_head, true)
+        if ri then
+          -- (staggered by id, so they don't all come due in the same frame)
+          if not kx then
+            kx = {}; REG.ix[id] = kx; REG.n = REG.n + 1
+            if REG.n > 4096 then REG.ix, REG.n = { [id] = kx }, 1 end   -- (a long mission: started afresh)
+          end
+          kx[1], kx[2] = ri, FRAME + REG.keep + id % 8
+        else
+          if kx then REG.ix[id] = nil; REG.n = REG.n - 1 end
+          if bit.band(flags, 1) == 0 then
+            if not REG.gone[id] then REG.gn = REG.gn + 1; if REG.gn > 1024 then REG.gone, REG.gn = {}, 1 end end
+            REG.gone[id] = FRAME + REG.keep
+          end
+        end
+      end
       if ri then
         need(ri < 16384, 'registry index')
         local rp = reg_rows[ri]
@@ -487,25 +588,38 @@ function read_candidates(pbase, origin, registry, want_header)
           reg_rows[ri] = rp
         end
         alive = re ~= nil and u32(re, 8) == id
-        if alive then ent = re end
+        if alive then ent = re
+        elseif REG.ix[id] then REG.ix[id] = nil; REG.n = REG.n - 1 end   -- (not it any more: the map again next time)
       end
-      reg_seen[id] = { alive, ent or false }
+      reg_seen[id] = ent or false
     end
     local x, y, z = bf32(off + 4), bf32(off + 8), bf32(off + 12)
     local pos, d2
     if x == x and y == y and z == z and math.abs(x) < 1e6 and math.abs(y) < 1e6 and math.abs(z) < 1e6 then
-      pos = { x, y, z }
+      -- ((5.1.5 Test 19) one place table per enemy a frame when the lists agree on where it is (they mostly do): every
+      -- sentry made its own copy. Nothing changes a place table once made, so sharing it is safe)
+      local sp = REG.pos[id]
+      if sp and sp[1] == x and sp[2] == y and sp[3] == z then pos = sp
+      else pos = { x, y, z }; REG.pos[id] = pos end
       if origin then d2 = (x - origin[1]) ^ 2 + (y - origin[2]) ^ 2 + (z - origin[3]) ^ 2 end
     end
-    candidates[#candidates + 1] = {
-      id = id, pos = pos, d2 = d2, entry = pbase + off,
-      mask_addr = pbase + off + 76, mask = ffi.string(PBUF + off + 76, 4), alive = alive and bit.band(flags, 1) ~= 0, score = score,
-      group = group, flags = flags, off = off, ent = ent, kind = ent and ent:sub(1, 8),
-      -- the dog's own line of sight: set while it can see the enemy, cleared when cover blocks it; the
-      -- float after it is how well it still remembers the enemy (1 = seen now, runs down to 0 over ~1 s)
-      visible = PBUF[off + 48] ~= 0 or (ent ~= nil and SGD.cloaks[ent:sub(1, 8)] == true), memory = bf32(off + 64),
-      eligible = alive and bit.band(flags, 1) ~= 0 and bit.band(faction, filter) ~= 0 and score > 0,
-    }
+    local n = #candidates + 1
+    local c = items and items[n]
+    if not c then c = {}; if items then items[n] = c end end
+    local o = off + 76
+    c.id, c.pos, c.d2, c.entry = id, pos, d2, pbase + off
+    c.mask_addr, c.mask = pbase + o, string.char(PBUF[o], PBUF[o + 1], PBUF[o + 2], PBUF[o + 3])
+    c.alive, c.score = alive and bit.band(flags, 1) ~= 0, score
+    c.group, c.flags, c.off, c.ent = group, flags, off, ent
+    c.kind = ent and ent:sub(1, 8) or nil
+    -- the dog's own line of sight: set while it can see the enemy, cleared when cover blocks it; the
+    -- float after it is how well it still remembers the enemy (1 = seen now, runs down to 0 over ~1 s)
+    c.visible = PBUF[off + 48] ~= 0 or (ent ~= nil and SGD.cloaks[ent:sub(1, 8)] == true)
+    c.memory = bf32(off + 64)
+    c.eligible = alive and bit.band(flags, 1) ~= 0 and bit.band(faction, filter) ~= 0 and score > 0
+    -- (what other parts note on an entry, cleared for its reuse: the live place, guarded by the frame anyway)
+    c.live_f, c.live_p, c.dp = nil, nil, nil
+    candidates[n] = c
   end
   for _, grp in ipairs(GROUPS) do
     local c = bu32(grp[1])
@@ -513,12 +627,13 @@ function read_candidates(pbase, origin, registry, want_header)
     for k = 0, c - 1 do add(grp[2] + k * 80, grp[3]) end
   end
   for _, one in ipairs(SINGLES) do if bu32(one[1] + 72) ~= 0 then add(one[1], one[2]) end end
+  if pool then pool.k = pk end
   -- (the faction list at its start, for the Tesla Tower's filter and its test notes)
   return candidates, want_header and ffi.string(PBUF, 264) or nil
 end
 
 
--- (4.6.5, the author: no more firing at the spot for a second after a target is lost, for every dog and sentry) the AI keeps
+-- (4.6.5, my note: no more firing at the spot for a second after a target is lost, for every dog and sentry) the AI keeps
 -- shooting where its target was until 1 s after the loss time in its record (+408, stamped by the game; found on the
 -- Gatling / pod / FRV guns, 4.6.2-4.6.3; the dump shows other sentry AIs with the same check). Moving that time back
 -- a second lets the game's own check end the firing at its next update. Only when +408 reads a time from the last
@@ -533,10 +648,14 @@ function loss_cut(rec_addr, now)
   return age / 1e6
 end
 
+-- ((5.1.5 Test 11) once a frame: the dog's look and the sentries' each asked, 4 reads a poll out of a mission)
+local inm_frame, inm_v = -1, false
 function in_mission()
+  if inm_frame == FRAME then return inm_v end
   local mission_ptr = ptr_of(read(A.g.mission, 8), 0)
   local mission = mission_ptr and read(mission_ptr, 68)
-  return mission ~= nil and u32(mission, 8) ~= 0 and u32(mission, 64) ~= 0
+  inm_frame, inm_v = FRAME, mission ~= nil and u32(mission, 8) ~= 0 and u32(mission, 64) ~= 0
+  return inm_v
 end
 
 -- returns a state table, or nil + a short reason. Game-structure surprises raise an Abort error.
@@ -551,7 +670,16 @@ function read_state()
   local t = os.clock()
   -- (4.6.3 review) after a failed look for your dog (none out, another backpack...) the next is LOCATE_SECONDS later:
   -- while a sentry kept the polls going every frame, it was repeated every frame
-  if not ctx and t < locate_fail_until then return nil, locate_fail_why end
+  if not ctx and t < locate_fail_until then
+    -- ((5.1.5 Test 11) a dog that is put away: only the backpack's drone slot is looked at (2 reads), every 0.25 s)
+    local K = IDLE.pack
+    if not (K and locate_fail_why == 'dog not deployed' and t >= IDLE.pack_next) then return nil, locate_fail_why end
+    IDLE.pack_next = t + IDLE.look
+    local pp = ptr_of(read(K[1], 8), 0)
+    local dv = pp == K[2] and read(K[3], 8)
+    if dv and u32(dv, 4) == 32767 then return nil, locate_fail_why end
+    locate_fail_until = 0   -- (launched, or its backpack changed: the full look now)
+  end
   local rec
   for attempt = 1, 2 do
     if not ctx or t >= ctx_until or attempt == 2 then
@@ -564,8 +692,16 @@ function read_state()
         locate_fail_why = type(c) == 'table' and c[1] == Abort and ('read_failed: ' .. tostring(c[2])) or 'read_failed'
         error(c, 0)
       end
-      if not c then ctx = nil; locate_fail_until, locate_fail_why = t + LOCATE_SECONDS, why; return nil, why end
+      -- ((5.1.5 Test 11) no dog out (none worn, put away, the option off...): the full look once a second, not four times)
+      -- (a dog put away: every 5 s, as its drone slot is looked at in between)
+      if not c then
+        ctx = nil
+        locate_fail_until, locate_fail_why = t + ((why == 'dog not deployed' and IDLE.pack) and 5.0 or IDLE.why[why] and 1.0 or LOCATE_SECONDS), why
+        IDLE.pack_next = t + IDLE.look
+        return nil, why
+      end
       ctx, ctx_until, unit_cache, reg_rows = c, t + LOCATE_SECONDS, {}, {}
+      c.peek_t, c.peek_full = t, t
     end
     rec = read(ctx.rec_addr, 160)
     if rec and u32(rec, 0) == ctx.want and u32(rec, 104) == ctx.drone_id then break end
@@ -575,7 +711,7 @@ function read_state()
   local dog, rec_addr, pbase, registry = ctx.dog, ctx.rec_addr, ctx.pbase, ctx.registry
   local tstate = rd(ctx.tstate, 32, 'targeting state')
   local drone_pos = unit_position(ctx.drone_unit)
-  local candidates = read_candidates(pbase, drone_pos, registry)
+  local candidates = read_candidates(pbase, drone_pos, registry, nil, nil, u32(rec, 24))
 
   local now = u64(rd(ctx.clock + 24, 8, 'clock'), 0)
   need(now > 0 and now < 9007199254740991, 'clock')
@@ -614,5 +750,227 @@ function read_state()
     aim = fire_node and target ~= 0 and u32(tstate, 0) == target and { f32(tstate, 20), f32(tstate, 24), f32(tstate, 28) } or nil,
     mates = team_wanted() and teammates(ctx, t) or {}, mates_found = team_state and team.found or 0,
   }
+end
+
+-- ------------------------------------------------------------------ idle (5.1.5 Test 11)
+-- IDLE.range: no dog or sentry engages farther than the mortars' 125 m, so with no enemy within 150 m of a gun it has
+-- nothing to do. IDLE.look: how often a part with nothing to do looks again. IDLE.settle: how long a part must have had
+-- nothing to do before it idles (a red safety flash or a gray marker still showing, a target just lost)
+IDLE = { range = 150, look = 0.25, settle = 1.0, pack = nil, pack_next = 0, drone = nil, dog_asleep = false, dog_next = 0, dog_since = nil, dog_skip = nil,
+  on = false, wake_scan = false, last_row = nil, working = nil, state = nil, notes = 0, frames = 0, work_frames = 0, idle_s = 0,
+  -- (the reasons the dog's full look waits a second: no dog worn, or one put away (its drone slot is looked at every
+  -- IDLE.look s, read_state). Not a helldiver missing for a moment or a vehicle you may step out of: those stay at 0.25 s)
+  why = { ['no backpack worn'] = true, ['dog not deployed'] = true, ['backpack is not a supported dog'] = true, ['no loadout'] = true,
+    ['guard dogs option off (left alone)'] = true } }
+session.idle, SGD.idle = IDLE, IDLE
+-- is an enemy this gun may pick within r m of 'origin'? One read (its perception record): an entry with an id, its
+-- alive flag and a faction it fights, not in 'skip' (the bodies in its list when it went idle). Not only those the game
+-- rates above 0 now: a dog still picks the others now and then. true too when the record can't be read or looks wrong
+-- (better awake than blind); a hidden entry (the mod's blank mask) isn't counted, but a gun with anything hidden never idles
+function IDLE.near_hostile(pbase, origin, r, skip)
+  if not (pbase and origin and pbase >= 65536 and pread(pbase)) then return true end
+  local fcount = bu32(0)
+  if fcount > 32 then return true end
+  local filter = 0
+  for j = 0, fcount - 1 do
+    local f = bu32(8 + j * 8)
+    if f >= 32 then return true end
+    filter = bit.bor(filter, bit.lshift(1, f))
+  end
+  local r2, ox, oy, oz = r * r, origin[1], origin[2], origin[3]
+  local function hot(off)
+    local id = bu32(off)
+    if id == 0 or bit.band(bu32(off + 72), 1) == 0 or bit.band(bu32(off + 76), filter) == 0 or (skip and skip[id]) then return false end
+    local x, y, z = bf32(off + 4), bf32(off + 8), bf32(off + 12)
+    if not (x == x and y == y and z == z) then return true end
+    return (x - ox) ^ 2 + (y - oy) ^ 2 + (z - oz) ^ 2 < r2
+  end
+  for _, grp in ipairs(GROUPS) do
+    local c = bu32(grp[1])
+    if c > 16 then return true end
+    for k = 0, c - 1 do if hot(grp[2] + k * 80) then return true end end
+  end
+  for _, one in ipairs(SINGLES) do if bu32(one[1] + 72) ~= 0 and hot(one[1]) then return true end end
+  return false
+end
+-- the dog's look while it idles: true while it still has nothing to do (its AI record still its own, no target, no
+-- enemy within IDLE.range of it); nil wakes it. Once a second its AI and perception records are checked to be where
+-- they were (the game moves them now and then; an old copy is no longer kept up to date) and the drone's place read
+-- (the 150 m leave room for a second of walking); the full look (locate) every 5 s
+local function same_records()
+  local beh, per = rptr(A.g.behaviours, 'behaviours'), rptr(A.g.perception, 'perception')
+  return map_lookup(beh + 64, ctx.drone_id, 32768) == ctx.bi and map_lookup(per + 48, ctx.drone_id, 32768) == ctx.pi
+    and rptr(beh + 96, 'behavior records') + ctx.bi * A.stride == ctx.rec_addr and rptr(per + 80, 'perception records') + ctx.pi * 5112 == ctx.pbase
+end
+function IDLE.dog_peek(t)
+  if not ctx or not in_mission() then return nil end
+  if t - (ctx.peek_full or ctx.peek_t or 0) >= 5.0 then
+    local okl, c = pcall(locate)
+    if not (okl and c and c.rec_addr == ctx.rec_addr and c.drone_id == ctx.drone_id and c.pbase == ctx.pbase and c.key == ctx.key) then return nil end
+    ctx.peek_full, ctx.peek_t, ctx.peek_pos = t, t, nil
+  elseif t - (ctx.peek_t or 0) >= 1.0 then
+    local okc, same = pcall(same_records)
+    if not (okc and same) then return nil end
+    ctx.peek_t, ctx.peek_pos = t, nil
+  end
+  if not ctx.peek_pos then ctx.peek_pos = unit_position(ctx.drone_unit); if not ctx.peek_pos then return nil end end
+  local rec = read(ctx.rec_addr, 108)
+  if not (rec and u32(rec, 0) == ctx.want and u32(rec, 104) == ctx.drone_id and u32(rec, 24) == 0) then return nil end
+  if IDLE.near_hostile(ctx.pbase, ctx.peek_pos, IDLE.range, IDLE.dog_skip) then return nil end
+  return true
+end
+-- (waking: the dog is looked up afresh before anything is acted on)
+function IDLE.dog_wake() ctx_until = 0 end
+
+-- ------------------------------------------------------------------ the damage check (5.1.5 Test 5)
+-- (my ask: "is there a way for sentries to know when they are actually dealing damage?" ... "It should still keep
+-- its targeting, but if after a short delay, its realizing its firing at something that isnt taking damage, it should
+-- change targets") The game keeps every enemy's health in its health component (manager at the 'health' global, from
+-- the 2026-09-24 module dump, our own reading): entity id -> index in a hash map at +0x1030 (slots, capacity, empty,
+-- multiplier), the entity objects at +0x1048 (id at +8), the records at +0x1058 (0x1b8 bytes; +0x14 = health now, an
+-- integer, which goes negative while bleeding out) and the settings at +0x1060 (0x1c bytes; +0x14 = full health).
+-- A shooter's target whose health hasn't gone down over a while of firing at it isn't being hurt: a wall, a rock,
+-- cover or armor in the way. Only armed once a health value has been seen going down this mission (so the check never
+-- acts where the records don't follow the fight, e.g. if a joined game doesn't keep them up to date).
+HEALTH = { proven = false, off = false, reads = 0, found = 0, bad = 0 }
+-- ((5.1.5 review) enemies whose shield takes the hits first, so their health stays put for a while under fire that is
+-- working: the Overseer and the Harvester (shield 1,500), the Gatekeeper and the Veracitor (1,300) - the Codex's
+-- shield parts. A Test 5 log had a Laser Sentry and a Gatling drop the same Overseer at 598 of 600 health. They are
+-- left out of the damage check (the Heavy Devastator's shield already was, with the burst rule)
+HEALTH.shielded = {}
+for _, h in ipairs({ 'da40bb347c7447f2', '965eae5a51acdd4a', '453fe22c634eb30f', '20b9c7734daead65' }) do
+  HEALTH.shielded[(h:gsub('..', function(x) return string.char(tonumber(x, 16)) end)):reverse()] = true
+end
+session.health = HEALTH
+local function s32(v) return v >= 2147483648 and v - 4294967296 or v end
+-- ((5.1.5 Test 18) the health manager, its map's header and its array header once a frame (HEALTH.fc), not per look-up)
+local function hp_raw(g, id)
+  local C = HEALTH.fc
+  if not C or C.f ~= FRAME or C.g ~= g then
+    C = C or {}; HEALTH.fc = C
+    C.f, C.g = FRAME, g
+    C.mgr = ptr_of(read(g, 8), 0)
+    C.mh = C.mgr and read(C.mgr + 0x1030, 20)
+    C.hdr = C.mgr and read(C.mgr + 0x1010, 0x58)
+  end
+  local mgr, hdr = C.mgr, C.hdr
+  if not (mgr and C.mh) then return nil end
+  local idx = map_lookup(mgr + 0x1030, id, 1048576, C.mh, true)
+  if not idx then return nil end
+  if not hdr or idx >= u32(hdr, 0) then return nil end
+  local ents, recs, sets = ptr_of(hdr, 0x38), ptr_of(hdr, 0x48), ptr_of(hdr, 0x50)
+  if not (ents and recs and sets) then return nil end
+  local eo = ptr_of(read(ents + idx * 8, 8), 0)
+  local ek = eo and read(eo + 8, 4)
+  if not ek or u32(ek, 0) ~= id then return nil end
+  local r, m = read(recs + idx * 0x1b8 + 0x14, 4), read(sets + idx * 0x1c + 0x14, 4)
+  if not (r and m) then return nil end
+  return s32(u32(r, 0)), s32(u32(m, 0))
+end
+-- an enemy's health now and its full health (nil when it has no health record or it can't be read)
+function HEALTH.of(id)
+  if HEALTH.off then return nil end
+  local g = A and A.g and A.g.health
+  if not g then HEALTH.off = true; note('damage check: off (the health records were not found in this game build)'); return nil end
+  HEALTH.reads = HEALTH.reads + 1
+  local ok, hp, mx = pcall(hp_raw, g, id)
+  if not ok or not hp then
+    -- ((5.1.5 review) not one record found in 200 looks: the records are not where this build is read from (a game
+    -- update that moved them, say) - the check goes off rather than looking up every target for nothing)
+    if HEALTH.found == 0 and HEALTH.reads >= 200 then HEALTH.off = true; note('damage check: off (no health record found in 200 looks: this game build keeps them elsewhere)') end
+    return nil
+  end
+  if mx <= 0 or mx > 10000000 or hp > mx * 2 + 10 or hp < -10000000 then
+    HEALTH.bad = HEALTH.bad + 1
+    if HEALTH.bad >= 20 then HEALTH.off = true; note('damage check: off (the health records do not read as expected in this game build)') end
+    return nil
+  end
+  HEALTH.found = HEALTH.found + 1
+  return hp, mx
+end
+-- ((5.1.5 Test 6, test builds: I can't watch every sentry) how each drop turned out, judged by the game's
+-- health values: was the next enemy it went for hurt within 3 s (the switch paid off), did anyone else hurt the
+-- dropped one while it was left alone (it wasn't immune), and when it came back to it, did it hurt it within its wait
+-- (then the drop was likely wrong, or the enemy had come out of cover). Kept for 15 s per drop, tallied per kind.
+HEALTH.tally, HEALTH.open = {}, {}
+function HEALTH.track_new(key, kind, id, wait, info)
+  local T = HEALTH.tally[kind]
+  if not T then T = { drops = 0, meter_moving = 0, meter_still = 0, meter_unknown = 0, unseen = 0, mate = 0, rise = 0, next_hurt = 0, next_none = 0,
+    back = 0, back_hurt = 0, others_hurt = 0 }; HEALTH.tally[kind] = T end
+  T.drops = T.drops + 1
+  if info.meter == nil then T.meter_unknown = T.meter_unknown + 1 elseif info.meter then T.meter_moving = T.meter_moving + 1 else T.meter_still = T.meter_still + 1 end
+  if info.unseen then T.unseen = T.unseen + 1 end
+  if info.mate then T.mate = T.mate + 1 end
+  if info.rise then T.rise = T.rise + 1 end
+  if #HEALTH.open < 60 then
+    HEALTH.open[#HEALTH.open + 1] = { key = key, kind = kind, id = id, t0 = info.t, wait = wait, hp = info.hp, hold = info.hold, next_hp = {}, back_f = nil }
+  end
+end
+-- each frame for a shooter (key) that has open drops: its target now, and how long it has fired at it
+function HEALTH.track_step(key, target, fired, t)
+  local L = HEALTH.open
+  local i = 1
+  while i <= #L do
+    local D = L[i]
+    local done = false
+    if D.key == key and t >= (D.next or 0) then
+      D.next = t + 0.2
+      local T = HEALTH.tally[D.kind]
+      -- the dropped enemy: anyone hurting it while it is left alone
+      if not D.others and t - D.t0 <= D.hold then
+        local hp = HEALTH.of(D.id)
+        if hp and D.hp and hp < D.hp and target ~= D.id then D.others = true; T.others_hurt = T.others_hurt + 1 end
+      end
+      -- the next enemy it fires at, within 3 s
+      if not D.next_done and target ~= 0 and target ~= D.id and t - D.t0 <= 3 then
+        local hp = HEALTH.of(target)
+        local h0 = D.next_hp[target]
+        if hp and not h0 then D.next_hp[target] = hp elseif hp and h0 and hp < h0 then D.next_done = true; T.next_hurt = T.next_hurt + 1 end
+      end
+      if not D.next_done and t - D.t0 > 3 then D.next_done = true; T.next_none = T.next_none + 1 end
+      -- back on the dropped one after its hold: hurt within its wait of firing?
+      if target == D.id and t - D.t0 > D.hold * 0.9 and not D.back_done then
+        local hp = HEALTH.of(D.id)
+        if not D.back_f then D.back_f, D.back_hp = fired, hp; T.back = T.back + 1
+        elseif hp and D.back_hp and hp < D.back_hp then D.back_done = true; T.back_hurt = T.back_hurt + 1
+        elseif fired - D.back_f >= D.wait then D.back_done = true end
+      end
+      done = t - D.t0 > 15
+    elseif t - D.t0 > 30 then done = true end
+    if done then table.remove(L, i) else i = i + 1 end
+  end
+end
+
+-- W: the shooter's own watch (a table it keeps); fired: how long it has fired at its current target 'id' (counted from
+-- when it picked it). Returns how many seconds of firing at 'id' have gone by without its health changing, added up
+-- over its turns on that enemy (the Rover's fire spreading leaves an enemy after about 0.6 s and comes back), or nil:
+-- not known, or not armed yet. An enemy not fired at for 5 s is forgotten.
+function HEALTH.watch(W, id, fired, t, who)
+  if HEALTH.off then return nil end
+  W.e = W.e or {}
+  local e = W.e[id]
+  if not e then e = { acc = 0, f = fired, next = 0 }; W.e[id] = e end
+  if W.cur ~= id then W.cur = id; e.f = fired end
+  e.t = t
+  if t - (W.clean or 0) > 2 then
+    W.clean = t
+    for k, x in pairs(W.e) do if t - x.t > 5 then W.e[k] = nil end end
+  end
+  if t < e.next then return e.secs end
+  e.next = t + 0.1
+  local df = math.max(0, fired - e.f)
+  e.f = fired
+  local hp, mx = HEALTH.of(id)
+  if not hp then e.hp, e.acc, e.secs = nil, 0, nil; return nil end
+  if e.hp and hp < e.hp and not HEALTH.proven then
+    HEALTH.proven = true
+    note(string.format('damage check: on (%s\'s target %d went from %d to %d health of %d)', who or '?', id, e.hp, hp, mx))
+  end
+  -- ((5.1.5 Test 16) when it last hurt it: a sentry finishes the enemy it is hurting before switching by priority)
+  if e.hp and hp < e.hp then e.hurt_t = t end
+  if not e.hp or hp ~= e.hp then e.hp, e.acc = hp, 0 else e.acc = e.acc + df end
+  W.hp, W.mx = hp, mx
+  e.secs = HEALTH.proven and e.acc or nil
+  return e.secs
 end
 end

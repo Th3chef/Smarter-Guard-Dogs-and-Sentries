@@ -1,6 +1,6 @@
 
 -- ======================================================================================================
--- Targeting laser (drawn only on your screen). (5.0, the author's colors) red from the gun to the enemy it is firing at,
+-- Targeting laser (drawn only on your screen). (5.0, my colors) red from the gun to the enemy it is firing at,
 -- amber while it is locked on but not firing yet (lining up, turning), flashing green to the enemy it is being kept
 -- off because a friendly (you, a teammate, a sentry, a SEAF soldier or civilian) is in the way, gray when it lost
 -- sight of its target. Uses the engine's own line drawing; if that is not
@@ -17,7 +17,7 @@ local RED_SECONDS = 0.6         -- how long the red warning stays up after the s
 -- (5.0) the beam's meaning (each table is the key the drawing looks its look up by; alpha, red, green, blue)
 local FIRE = { 255, 220, 16, 12 }     -- firing at an enemy: red
 local FRIEND = { 255, 0, 200, 20 }    -- held off an enemy because a friendly is in the way: green (flashing)
--- ((5.1.0 Test 1, the author: "make the laser inversion an option. Put it back to how I had it, and make it an option I can
+-- ((5.1.0 Test 1, my ask: "make the laser inversion an option. Put it back to how I had it, and make it an option I can
 -- change" - "suboptions under targeting laser") the '... green while firing' choices under Targeting Laser set this flag:
 -- firing green and the safety's flashing beam red, as before 5.0. The tables above stay the keys; only the look swaps)
 local LOST = { 255, 150, 150, 150 }   -- a shot stopped because the target went out of sight (cover or smoke): gray
@@ -31,10 +31,10 @@ local FIRE_STEP = 7                               -- the step where it is actual
 local FLASH_HZ = 6
 
 local laser = { state = 'not started', worlds = {},
-  -- (4.6.7 Test 1, the author: the Rover's laser shook while it aimed) seconds: how quickly a dog's beam end catches up
+  -- (4.6.7 Test 1, my note: the Rover's laser shook while it aimed) seconds: how quickly a dog's beam end catches up
   -- with where it should point (as BEAM_SMOOTH does for the sentries since 5.0 Test 14; the dogs had none)
   dog_smooth = 0.1, dog_beam = {} }
--- ((5.0 Test 9, the author: the markers "need to move more in real time like actual pings"; the laser "sometimes floating
+-- ((5.0 Test 9, my note: the markers "need to move more in real time like actual pings"; the laser "sometimes floating
 -- in front of the enemies") an enemy's place as the game draws it this frame - its unit's root - instead of the copy in
 -- the gun's perception record, which the AI refreshes only ~6 times a second (the Test 8 probe: a gunship's place held
 -- still every other sample). The perception copy when the unit can't be read
@@ -49,18 +49,52 @@ end
 -- ((5.0 Test 9) how far into the enemy a beam fixed on a barrel runs past the point nearest its centre: the line is
 -- depth-tested, so its visible end is where it meets the enemy's body)
 laser.INTO = 0.4
+-- ((5.1.5 Test 22, my note: "some enemies I've seen the laser above their heads") the beam runs along the barrel, and a
+-- barrel pitched up for a long shot - or a short enemy under the beam's usual height - had it pass over the enemy's
+-- head. When the beam's end is beside the enemy (within its width) but above its top, the end comes down onto its upper
+-- body; a beam off to the side stays as it is. Tops (meters above the feet) by enemy name, 2 m when unknown; 0 = flying
+-- or huge, left alone (laser.kind_name is set by the sentry code, which knows the armor table)
+local LASER_TOPS = {
+  { 'Bile Titan', 9 }, { 'Factory Strider', 12 }, { 'War Strider', 6 }, { 'Scout Strider', 4.2 }, { 'Harvester', 7 },
+  { 'Tank', 3.2 }, { 'Hulk', 3.4 }, { 'Charger', 3.0 }, { 'Impaler', 3.5 }, { 'Spewer', 2.6 }, { 'Commander', 2.4 },
+  { 'Hive Guard', 1.8 }, { 'Warrior', 1.6 }, { 'Hunter', 1.1 }, { 'Scavenger', 0.8 }, { 'Pouncer', 1.0 }, { 'Stalker', 2.8 },
+  { 'Berserker', 2.4 }, { 'Devastator', 2.6 }, { 'Overseer', 2.6 }, { 'Fleshmob', 2.8 }, { 'Crescent', 2.6 },
+  { 'Voteless', 1.8 }, { 'Gatekeeper', 3.2 }, { 'Veracitor', 3.5 }, { 'Emplacement', 2.5 },
+  { 'Gunship', 0 }, { 'Dropship', 0 }, { 'Stingray', 0 }, { 'Warp Ship', 0 }, { 'Leviathan', 0 }, { 'Watcher', 0 },
+  { 'Elevated', 0 }, { 'Shrieker', 0 }, { 'Dragonroach', 0 }, { 'Hive Lord', 0 }, { 'Vox Engine', 0 },
+}
+local LASER_TOP = { n = 0 }
+laser.top_of = function(kind)
+  if not kind then return 2.0 end
+  local v = LASER_TOP[kind]
+  if v then return v end
+  v = 2.0
+  local nm = laser.kind_name and laser.kind_name(kind)
+  if nm then for _, e in ipairs(LASER_TOPS) do if nm:find(e[1], 1, true) then v = e[2]; break end end end
+  if LASER_TOP.n < 500 then LASER_TOP[kind], LASER_TOP.n = v, LASER_TOP.n + 1 end
+  return v
+end
+laser.fit_end = function(e, c)
+  local p = e and c and c.pos and laser.live(c)
+  if not p then return e end
+  local T = laser.top_of(c.kind)
+  if T <= 0 or e[3] <= p[3] + T then return e end
+  local dx, dy, w = e[1] - p[1], e[2] - p[2], math.max(1.2, 0.4 * T)
+  if dx * dx + dy * dy > w * w then return e end
+  return { e[1], e[2], p[3] + T * 0.6 }
+end
 laser.MARK_SETTLE = 0.25   -- ((5.1.0 Test 1) seconds a dog keeps a target before its marker shows over it
 -- (4.5.3) Laser Brightness (the option's sub-options, or Bingus' Mod Options Menu): a multiplier on every beam's and ring's
 -- color - the lines' red, green and blue (the engine ignores their transparency), the glow's transparency. 1 = as
 -- before; read every frame
--- (5.0 Test 15, the author: "add targeting marker opacity as well, in case people want to tune how it appears") the Marker
+-- (5.0 Test 15, my ask: "add targeting marker opacity as well, in case people want to tune how it appears") the Marker
 -- Opacity option (its sub-options, or the Mod Options Menu): a multiplier on the markers' transparency. 1 = as designed
 laser.marker_opacity = function()
   local o = rawget(_G, 'SmarterGuardDogsMarkerOpacity')
   if type(o) ~= 'number' or o ~= o then return 1 end
   return math.max(0.1, math.min(1, o))
 end
--- (5.1.0 Test 1, the author: "Add an option in the options menu to adjust the size of the targeting marker") the Marker
+-- (5.1.0 Test 1, my ask: "Add an option in the options menu to adjust the size of the targeting marker") the Marker
 -- Size option (its sub-options, or the Mod Options Menu): a multiplier on the markers' size. 1 = as designed
 laser.marker_size = function()
   local o = rawget(_G, 'SmarterGuardDogsMarkerSize')
@@ -84,12 +118,12 @@ local SR = rawget(_G, 'stingray')
 -- green is a neon laser-pointer green, (0,200,20). A beam on a target ends in a small cross just in front of the
 -- enemy. The line object is depth-tested: walls and terrain hide the beam like a real one.
 do
-  -- (5.0 Test 5, the author: Test 4's thick beam "looks super cartoony") a laser's look: one hot core line inside four
+  -- (5.0 Test 5, my note: Test 4's thick beam "looks super cartoony") a laser's look: one hot core line inside four
   -- strands 3 mm out in the beam's own color (no darker edge: the engine draws lines solid, so a dim edge only made a
   -- dark outline), ending in a small bright cross on the enemy. Only firing and safety holds have a beam; locked on
   -- (about to fire) and target lost are a marker over the enemy instead, like the game's ping. Every beam and marker
   -- fades with its distance from you (FADE: full up to 'near' m, down to 'low' at 'far' m and beyond)
-  -- (5.0 Test 6, the author: "less intense", like a real laser - a thin line with a soft glow and a bright point where
+  -- (5.0 Test 6, my ask: "less intense", like a real laser - a thin line with a soft glow and a bright point where
   -- it leaves the gun) the strands are dimmer than the core, the core is only lightly whitened, and a small star
   -- marks the emitter. The marker is the gun's own stratagem icon ("I won't know what sentry/dog it is"), facing you
   -- and kept about the same size on screen at any distance, over a small chevron pointing at the enemy
@@ -98,7 +132,9 @@ do
     dot = 0.035, dot_back = 0.08,   -- the cross on the target: its half-size, and how far in front of the end
     flare = 0.045, flare_v = 0.028,  -- the star at the emitter: its half-width and half-height (meters)
     mark_up = 1.0,                   -- the chevron's point, over the enemy's aim point (meters)
-    icon_per_m = 0.05, icon_min = 0.5, icon_max = 3.5,   -- ((5.0 Test 8) about 40 px at 1080p, was 30)   -- the icon's height: this much per meter from you, within these
+    icon_per_m = 0.05, icon_min = 0.5, icon_max = 7.0,   -- ((5.1.5 Test 30: "the mortar marker still sometimes doesnt show at range") was 3.5: past 70 m the marker shrank (17 px at a mortar's 125 m); the same size on screen now to 140 m
+      -- ((5.0 Test 8) about 40 px at 1080p, was 30)   -- the icon's height: this much per meter from you, within these
+    icon_scale = 0.75,               -- ((5.2, my ask: "make the default size of the in-game markers 25% smaller") about 30 px at 1080p; Marker Size multiplies this
   }
   local FADE = { near = 25, far = 70, low = 0.45, steps = 4 }
   laser.fade_of = function(from)
@@ -145,7 +181,7 @@ do
       end
       return out
     end
-    -- ((5.1.0 Test 1, the author: "clean up the marker a bit, its kind of low-resolution") the icons as filled shapes
+    -- ((5.1.0 Test 1, my ask: "clean up the marker a bit, its kind of low-resolution") the icons as filled shapes
     -- (tools/icons_vec.py): triangles traced from the 256-pixel HUD icons, smooth edges at any size, and a rounded dark
     -- edge. Each triangle six numbers (across, up), turned counterclockwise as the band quads are)
     local vval = {}
@@ -191,11 +227,13 @@ do
       end
     end
   end
-  -- which icon each gun shows (by its name in DEFS/DOGS); the pod gun runs the Gatling's AI and has no icon of its own
+  -- which icon each gun shows (by its name in DEFS/DOGS); ((5.1.5 Test 7, my ask: "It should use the Booster icon")
+  -- the pod gun shows the Armed Resupply Pods booster's pod and gun (it ran the Gatling's)
   local ICON_OF = {
     ['Machine Gun Sentry'] = 'mg', ['Gatling Sentry'] = 'gatling', ['Autocannon Sentry'] = 'ac', ['Rocket Sentry'] = 'rocket',
     ['Laser Sentry'] = 'laser', ['Flame Sentry'] = 'flame', ['Tesla Tower'] = 'tesla', ['Mortar Sentry'] = 'mortar',
-    ['EMS Mortar Sentry'] = 'ems', ['Resupply Pod Gun'] = 'gatling', ['Supply FRV Gun'] = 'frv',
+    ['EMS Mortar Sentry'] = 'ems', ['Gas Mortar Sentry'] = 'gasmortar',   -- ((5.1.5 Test 12) its own icon, from the wiki's (the game's is out of reach)
+    ['Resupply Pod Gun'] = 'pod', ['Supply FRV Gun'] = 'frv',
     ['Guard Dog'] = 'dog', ['Rover'] = 'rover', ['K-9'] = 'k9',
   }
   -- the strands' directions round the beam, and the ring's, worked out once
@@ -218,7 +256,7 @@ do
   -- where a marker goes: its icon, the chevron's point (x, y, z), your right (rx, ry), its size and the chevron's
   -- half-width. ((5.0 Test 8) several guns on one enemy: their icons side by side - b.slot of b.slots, set by
   -- laser.prepare)
-  -- ((5.0 Test 15, the author: "the marker only appears vertically up and down, it should display to you the same whether
+  -- ((5.0 Test 15, my ask: "the marker only appears vertically up and down, it should display to you the same whether
   -- you are flat on the ground or looking down from the top of a skyscraper") the marker faces your eyes, tilted as
   -- well as turned: its right stays level, its 'up' (ux, uy, uz) leans back as you look down on it. Your eyes: 1.7 m
   -- over your helldiver (the camera is close to that). Straight down on it, the last right is kept
@@ -243,7 +281,7 @@ do
         if ul > 1e-3 then ux, uy, uz = ux / ul, uy / ul, uz / ul else ux, uy, uz = 0, 0, 1 end
       end
     end
-    local sz = math.min(BEAM.icon_max, math.max(BEAM.icon_min, dist * BEAM.icon_per_m)) * laser.marker_size()
+    local sz = math.min(BEAM.icon_max, math.max(BEAM.icon_min, dist * BEAM.icon_per_m)) * BEAM.icon_scale * laser.marker_size()
     local n = b.slots or 1
     if n > 1 then
       local o = ((b.slot or 1) - (n + 1) / 2) * sz * 1.1
@@ -254,7 +292,7 @@ do
   end
   -- the marker as lines (when the game build has no world GUI): line(color, fade, ...) as for the beams. The gun's icon
   -- stands upright facing you, about 30 pixels tall at any distance; a small chevron under it points at the enemy
-  -- ((5.1.3, the author: "being able to hide the markers ... behind walls") the game's lines are the only drawing
+  -- ((5.1.3, my ask: "being able to hide the markers ... behind walls") the game's lines are the only drawing
   -- walls hide (the world GUI can't be depth tested from a mod), so Behind walls draws the marker with them: the traced
   -- icon (edge, body, glyph) cut into rows, one line per row and color - lines a pixel or so apart, so it reads as filled
   -- - with a row's pieces never overlapping (lines in one plane would fight). Each icon is cut once into 96 rows
@@ -524,7 +562,7 @@ end
 -- new this frame (the mod is checking only a few times a second, idle sentries): both line objects are drawn again as
 -- they are. An empty list clears everything
 -- ((4.6.4 review) the drawing in a named function, called through pcall: a new closure every frame before)
--- (5.0, the author: "smoother motion") before a frame's beams are drawn: each styled beam gets its fade with distance from you,
+-- (5.0, my ask: "smoother motion") before a frame's beams are drawn: each styled beam gets its fade with distance from you,
 -- and a beam that has a 'key' (whose it is: the dog, a sentry) and changed target ('tg') swings its end over to the
 -- new target over SWITCH seconds (eased) instead of jumping there
 local SWITCH = 0.14
@@ -535,7 +573,7 @@ local function SLOT_ORDER(a, c) return a.sk < c.sk end
 laser.prepare = function(beams)
   local t = os.clock()
   local E_ = laser.ends
-  -- ((5.0 Test 8, the author: the marker is "not showing consistently") a locked-on marker missing for a frame or two
+  -- ((5.0 Test 8, my note: the marker is "not showing consistently") a locked-on marker missing for a frame or two
   -- (the gun's records between two states) stays up to MARK_HOLD s where it was, so it doesn't blink)
   local MH = laser.mark_last
   -- ((5.0 release review) the held entries are reused, not made anew each frame: m.f = the frame stamp it was last seen)
@@ -563,7 +601,7 @@ laser.prepare = function(beams)
       g[#g + 1] = b
     end
   end
-  -- ((5.0 Test 17, test builds; the author: with 3 or more guns on one enemy "it doesnt display more than 2, or at least the dog
+  -- ((5.0 Test 17, test builds; my note: with 3 or more guns on one enemy "it doesnt display more than 2, or at least the dog
   -- marker didnt show") how many markers stand on one enemy, and how often the dog's is up while it has a target
   if TESTER then
     local MS = laser.mstat or { n = 0, dog_t = 0, dog_m = 0, most = 0, three = 0, logged = 0 }
@@ -844,9 +882,9 @@ do
   G.markers_ok = function() return not G.off and usable() end
   -- the marker's colors (alpha, red, green, blue): the weapon glyph solid, the sentry/backpack body see-through, the
   -- chevron as the glyph. Locked on: the game's ping yellow; lost: gray
-  -- ((5.0 Test 8, the author: "marker is pretty rough") a pale yellow weapon glyph on a deeper yellow body, both over a
+  -- ((5.0 Test 8, my ask: "marker is pretty rough") a pale yellow weapon glyph on a deeper yellow body, both over a
   -- dark see-through edge so it reads on sky, snow or smoke)
-  -- ((5.0 Test 14, the author: the markers "sometimes get really dark and hard to see") lighter all round: the dark edge at
+  -- ((5.0 Test 14, my note: the markers "sometimes get really dark and hard to see") lighter all round: the dark edge at
   -- about half its strength (a thin shadow, not a dark plate), the body more solid, the target-lost gray near white;
   -- and the markers are no longer dimmed by Laser Brightness (they are their own option now)
   local MARK = {
@@ -1040,6 +1078,9 @@ do
     local ok, err = pcall(draw, w, beams)
     if not ok then off(tostring(err)) end
   end
+  -- ((5.1.5 Test 20) all calls into the game's GUI: not for the compiler, see engine_main.lua)
+  local j = rawget(_G, 'jit')
+  if type(j) == 'table' and type(j.off) == 'function' then pcall(j.off, draw, true) end
 end
 
 -- ------------------------------------------------------------------------------------------------------
@@ -1161,7 +1202,7 @@ local function gun_point(st, to, learn)
       local dir = { a[1] * B[2], a[2] * B[2], a[3] * B[2] }
       local v = { to[1] - nd.pos[1], to[2] - nd.pos[2], to[3] - nd.pos[3] }
       local len = math.sqrt(v[1] * v[1] + v[2] * v[2] + v[3] * v[3])
-      -- ((5.0 Test 7, the author: "like a fixed laser") along the barrel however far off the enemy it points - before, a
+      -- ((5.0 Test 7, my ask: "like a fixed laser") along the barrel however far off the enemy it points - before, a
       -- barrel more than 60 degrees off fell back to pointing at the enemy)
       if len < 1 then return straight(st, to, nd.pos) end
       -- ((5.0 Test 9) as far as the point on the barrel's line nearest the enemy, and into it: the beam meets the
@@ -1306,7 +1347,7 @@ local function laser_frame(st, beams, safety_t, safety_enemy, safety_step, cover
     beams[#beams + 1] = { from = { D[1] + dx * k, D[2] + dy * k, D[3] + LASER_RISE + dz * k }, to = to, argb = argb, dot = mine, key = mine and 'dog' or nil, tg = st.target }
   end
   -- ((5.0 Test 5) locked on / target lost: a marker over the enemy, no beam)
-  -- ((5.0 Test 10, the author: no marker "unless it can actually harm them... if it is outside of their range" - the Guard
+  -- ((5.0 Test 10, my note: no marker "unless it can actually harm them... if it is outside of their range" - the Guard
   -- Dog marked bots at 35-40 m it never fired at) only on an enemy within the dog's range that it can hurt
   local function can_mark(c)
     local r = st.dog.range
@@ -1324,13 +1365,14 @@ local function laser_frame(st, beams, safety_t, safety_enemy, safety_step, cover
   local warn = safety_t and t - safety_t < RED_SECONDS and ATTACK_STEPS[safety_step]
     and (ATTACK_STEPS[st.node] or st.target == 0)
   if warn then
-    -- ((5.0 Test 7, the author: "the color of the laser will change to green if a safety stops it") its laser, along the
-    -- barrel, turned green. ((5.0 Test 20, the author: "the safety laser should still flash green, not solid green") flashing)
+    -- ((5.0 Test 7, my ask: "the color of the laser will change to green if a safety stops it") its laser, along the
+    -- barrel, turned green. ((5.0 Test 20, my ask: "the safety laser should still flash green, not solid green") flashing)
     local e = by_id(safety_enemy)
     local lit = math.floor(t * FLASH_HZ * 2) % 2 == 0   -- ((5.0 release review) an even blink: safety_t is renewed with each hold)
     if e and e.pos and lit then
       local to = spot(e)
       local gp, gfrom, _, along = gun_point(st, to, false)
+      gp = laser.fit_end(gp, e)
       beam(gp or to, FRIEND, gp and gfrom, nil, nil, along)
     end
   elseif cover_t and t - cover_t < RED_SECONDS and ATTACK_STEPS[cover_step] and (ATTACK_STEPS[st.node] or st.target == 0)
@@ -1349,6 +1391,7 @@ local function laser_frame(st, beams, safety_t, safety_enemy, safety_step, cover
       if e2 and e2.pos then
         local to = spot(e2)
         local gp, gfrom, gon, along = gun_point(st, to, false)
+        gp = laser.fit_end(gp, e2)
         beam(gp or to, FIRE, gp and gfrom, gon, to, along)
       end
     end
@@ -1358,6 +1401,7 @@ local function laser_frame(st, beams, safety_t, safety_enemy, safety_step, cover
       local to = spot(e)
       local far = e.d2 and e.d2 > GUN.min_range ^ 2
       local gp, gfrom, gon, along = gun_point(st, to, e.visible and far)
+      gp = laser.fit_end(gp, e)
       laser.last_gun, laser.last_to = gp, to     -- (the research log compares the two)
       -- (4.5.3 Test 12, test builds) how far the beam points from where the game aims the gun (its targeting state's
       -- aim point): the angle between the two from the muzzle, and how far apart they pass at the aim point. Logged
@@ -1386,13 +1430,13 @@ local function laser_frame(st, beams, safety_t, safety_enemy, safety_step, cover
       beam(gp or to, FIRE, gp and gfrom, gon, to, along)
     end
   end
-  -- ((5.0 Test 17, the author: "Guard dog marker seems a little inconsistent") its icon over its target the whole time it has
+  -- ((5.0 Test 17, my ask: "Guard dog marker seems a little inconsistent") its icon over its target the whole time it has
   -- one - lining up, firing, held by the safety, moving to a better spot, after a target went out of sight - like the
   -- sentries' (before, only while lining up or firing: the icon blinked out whenever the dog did anything else)
   local Dp, Pp = st.drone_pos, st.player_pos
   local docked = Dp and Pp and ((Dp[1] - Pp[1]) ^ 2 + (Dp[2] - Pp[2]) ^ 2) < 1.2 ^ 2   -- (on your back, reloading)
   laser.dog_target = st.target ~= 0 and not docked   -- (the test builds' marker count)
-  -- ((5.1.0 Test 1, the author: "the marker with the guard dog rover and guard dog would constantly flick around to
+  -- ((5.1.0 Test 1, my ask: "the marker with the guard dog rover and guard dog would constantly flick around to
   -- enemies it cant reach still") not over a target the mod is hiding from it this frame (out of range, a friendly in
   -- the way, out of sight, no shot, armor it can't hurt): the game kept picking those and the mod kept taking them away,
   -- so the icon jumped between them. And only once it has kept the same target for MARK_SETTLE seconds

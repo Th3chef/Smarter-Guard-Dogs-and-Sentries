@@ -32,7 +32,7 @@ local menu_step = (function()
       description = 'The mod handles your guard dog (Guard Dog, Rover, K-9). Turn off to leave your dog to the game; your sentries and the rest of the mod keep working.',
       apply = function(v) set('Dogs', v) end, start = function() return flag('Dogs') end },
     { key = 'sentries', label = 'Sentries', type = 'choice', choices = { 'Off', 'All sentries', 'All but the Tesla Tower' },
-      description = 'The mod handles your sentries (Machine Gun, Gatling, Autocannon, Rocket, Laser, Flame, Mortar, EMS Mortar and the Tesla Tower), plus the guns on armed resupply pods and the Supply FRV. Turn off to leave your sentries to the game; your guard dog and the rest of the mod keep working.',
+      description = 'The mod handles your sentries (Machine Gun, Gatling, Autocannon, Rocket, Laser, Flame, Mortar, EMS Mortar, Gas Mortar and the Tesla Tower), plus the guns on armed resupply pods and the Supply FRV. Turn off to leave your sentries to the game; your guard dog and the rest of the mod keep working.',
       apply = function(v) set('Sentries', v ~= 1); set('Tesla', v == 2) end,
       start = function() return not flag('Sentries') and 1 or (flag('Tesla') and 2 or 3) end },
     { key = 'intelligence', label = 'Intelligence', type = 'choice',
@@ -56,11 +56,11 @@ local menu_step = (function()
     { key = 'seaf_safety', label = 'SEAF Safety', type = 'toggle',
       description = 'Your guard dog and your sentries don\'t shoot through SEAF soldiers or civilians: they hold fire while one is in their line of fire, don\'t swing their fire across one, and the mortars, the Tesla Tower and the rocket, autocannon and flame sentries leave alone enemies right next to one. Turn off to let them fire through SEAF soldiers and civilians. Everything else keeps working.',
       apply = function(v) set('SEAFSafety', v) end, start = function() return flag('SEAFSafety') end },
-    -- ((5.1.3, the author: "organize the options better for the targeting laser ... add targeting laser color as an
+    -- ((5.1.3, my ask: "organize the options better for the targeting laser ... add targeting laser color as an
     -- option and then add Targeting laser Glow and Line as options again") as in the mod manager: the style here, the colors
     -- in Laser Color. New keys: the old 'laser' (Line / Glow) and 'laser_color' (Off / Red / Green / Line) rows saved other
     -- choice numbers
-    -- ((release review, the author: "Glow laser should be first, and line should be an option they can switch to") Glow
+    -- ((release review, my ask: "Glow laser should be first, and line should be an option they can switch to") Glow
     -- first, as in the mod manager)
     { key = 'laser_style', label = 'Targeting Laser', type = 'choice', choices = { 'Glow', 'Line', 'Off' },
       description = 'A laser from the barrel of your guard dog and your sentries (not the mortars), only on your screen: one color while they fire, the other flashing when a friendly is in the way (see Laser Color). Glow: a soft glowing beam that shows through walls, like the markers. Line: a thin line that walls hide. The Tesla Tower shows its reach as a red ring.',
@@ -154,7 +154,7 @@ laser.step = function(st, sentries_out, t)
   laser.dog_target = false
   if st then laser_frame(st, beams, P.safety_now and P.safety_t or nil, P.safety_enemy, P.safety_step, P.cover_t, P.cover_enemy, P.cover_step) end
   if sentries_out then sentry_beams(beams, t) end
-  -- ((5.0 Test 13, the author: "Targeting Marker should be an option that can be toggled") the markers belong to the
+  -- ((5.0 Test 13, my ask: "Targeting Marker should be an option that can be toggled") the markers belong to the
   -- Targeting Marker option, the beams and rings to the Targeting Laser: whatever is off is dropped here
   local lines_on, marks_on = rawget(_G, 'SmarterGuardDogsLaser') == true, OPT.marker()
   if not (lines_on and marks_on) then
@@ -166,6 +166,19 @@ laser.step = function(st, sentries_out, t)
     beams = kept
   end
   if #beams > 0 or beams.rings then laser_draw(beams) else laser_clear() end
+end
+
+-- ((5.1.5 Test 11) the idle state's changes, logged once each (up to 40 a mission), and its frame counts for the log)
+local function idle_note(t, working, why)
+  IDLE.frames = IDLE.frames + 1
+  if working then IDLE.work_frames = IDLE.work_frames + 1 end
+  -- (each change between idle and working, and between idle reasons; not between the working ones, which come and go
+  -- as the dog and the sentries take turns)
+  if working ~= IDLE.working or (not working and why ~= IDLE.state) then
+    IDLE.working, IDLE.state = working, why
+    IDLE.notes = IDLE.notes + 1
+    if IDLE.notes <= 40 then event(why) elseif IDLE.notes == 41 then event('(idle and working changes: no more are logged this mission)') end
+  end
 end
 
 local function tick()
@@ -198,16 +211,29 @@ local function tick()
   end
   -- (test builds: F8 also works while no dog is out, e.g. right after you died; checked every frame so a quick
   -- press isn't missed between the slower polls)
-  if TESTER and SGD.status ~= 'active' then pcall(check_marker, nil) end
+  if TESTER and (SGD.status ~= 'active' or IDLE.dog_asleep) then pcall(check_marker, nil) end
   if broken or t < next_poll then
     -- (a frame the mod skips: the laser as it was - sent again as they are)
     if not broken and laser_wanted() then laser.redraw() end
+    if IDLE.working ~= nil then idle_note(t, IDLE.working, IDLE.state) end
     return
   end
   next_poll = t + 0.1          -- relaxed while nothing is going on; every frame while a dog is out (below)
   stats.polls = stats.polls + 1
   local ok, st, why
-  ok, st, why = pcall(read_state)
+  -- ((5.1.5 Test 11) a dog with nothing to do idles: only its look every IDLE.look s (IDLE.dog_peek); anything else
+  -- wakes it, and it is then looked up afresh before anything is done)
+  local asleep = false
+  if IDLE.dog_asleep then
+    if t < IDLE.dog_next then asleep = true
+    else
+      IDLE.dog_next = t + IDLE.look
+      local okp, still = pcall(IDLE.dog_peek, t)
+      if okp and still then asleep = true
+      else IDLE.dog_asleep, IDLE.dog_since = false, nil; IDLE.dog_wake(); IDLE.wake_scan = true end
+    end
+  end
+  if asleep then ok, st, why = true, nil, nil else ok, st, why = pcall(read_state) end
   if not ok then
     local e = st
     st = nil
@@ -232,9 +258,18 @@ local function tick()
     end
     last_error = why
   end
-  local status = st and 'active' or why
+  local status = (st or asleep) and 'active' or why
+  -- ((5.1.5 review) the end of a mission, whatever is out or switched on: the damage check is armed afresh in the next
+  -- one (it was reset in the sentries' step only, which returns early with the Sentries option off), and the dog's count
+  -- of enemies it left alone for doing no damage goes (it decides how long the next one is left alone)
+  if why == 'not in a mission' and SGD.status ~= 'not in a mission' then
+    HEALTH.proven = false
+    P.nd_n, P.nd, P.dw = nil, nil, nil
+    read_candidates('forget')   -- ((5.1.5 Test 18) the kept registry places
+    IDLE.dog_asleep, IDLE.dog_since, IDLE.notes = false, nil, 0
+  end
   -- ((4.6.4 review) out of a mission: forget the laser's per-world objects - see laser.forget)
-  -- ((5.1.2, the author: make sure a ring isn't left on screen) but the game keeps its world through the extraction
+  -- ((5.1.2, my note: make sure a ring isn't left on screen) but the game keeps its world through the extraction
   -- (ship and later missions), and a line object goes on showing its last dispatch: a Tesla Tower still out, the
   -- Rocket Sentry's ring on its lit half, or a dog's beam at that moment stayed on screen until the game restarted
   -- (sims sentry_tesla_mission_end / sentry_rocket_mission_end). So on the poll the mission ends - the poll before was
@@ -244,7 +279,7 @@ local function tick()
     if SGD.status ~= 'not in a mission' then laser.clear_now() end
     laser.forget()
   end
-  local dogname = st and st.dog.name or nil
+  local dogname = st and st.dog.name or (asleep and SGD.dog) or nil
   if status ~= SGD.status then event('status: ' .. tostring(status)) end
   if dogname and dogname ~= SGD.dog then event('dog: ' .. dogname) end
   local dt = last_poll_t and math.min(t - last_poll_t, 0.5) or 0
@@ -254,9 +289,11 @@ local function tick()
     local d = session.dog_time[dogname] or { out = 0, targeted = 0, firing = 0 }
     session.dog_time[dogname] = d
     d.out = d.out + dt
-    if st.target ~= 0 then d.targeted = d.targeted + dt; if st.node == 7 then d.firing = d.firing + dt end end
+    if st and st.target ~= 0 then d.targeted = d.targeted + dt; if st.node == 7 then d.firing = d.firing + dt end end
   end
-  if not st then
+  if asleep then
+    -- (the dog idles: nothing to read or steer)
+  elseif not st then
     SGD.status, SGD.dog = why, nil
     -- ((4.6.6 review) a failed read keeps the dog's hidden enemies hidden for up to half a second: putting them all
     -- back at once let the game pick the enemy behind you while the dog was still out. Each one is put back only if its
@@ -289,6 +326,21 @@ local function tick()
     end
     -- nothing around and nothing hidden: look three times a second less often (enemies take a moment to arrive)
     if #st.candidates == 0 and st.target == 0 and not next(hidden) then next_poll = t + 0.05 end
+    -- ((5.1.5 Test 11) nothing to do - no target, nothing hidden from it, no enemy alive in its list within IDLE.range -
+    -- for IDLE.settle s: it idles. The bodies in its list then are left out of its look (they never come back to life))
+    local quiet = st.target == 0 and not next(hidden)
+    if quiet then
+      local R2 = IDLE.range * IDLE.range
+      for _, c in ipairs(st.candidates) do if (c.alive and (not c.d2 or c.d2 < R2)) or c.mask == BLANK then quiet = false; break end end
+    end
+    if not quiet then IDLE.dog_since = nil
+    elseif not IDLE.dog_since then IDLE.dog_since = t
+    elseif t - IDLE.dog_since >= IDLE.settle then
+      IDLE.dog_asleep, IDLE.dog_next, IDLE.dog_since = true, t + IDLE.look, nil
+      local skip = {}
+      for _, c in ipairs(st.candidates) do if not c.alive then skip[c.id] = true end end
+      IDLE.dog_skip = skip
+    end
     if RESEARCH then local okr, er = pcall(research_frame, st); if not okr then RESEARCH = false; note('research stopped: ' .. tostring(er)) end end
   end
   -- sentries (4.0): handled whether or not a dog is out; polled every frame while one of yours is out
@@ -307,6 +359,15 @@ local function tick()
   end
   -- (every frame while a sentry is busy; idle ones - no target, no enemy in their lists - ten times a second)
   if sentries_busy then next_poll = 0 end
+  -- ((5.1.5 Test 11) the whole mod idles while no dog is awake and no sentry is busy: a poll every IDLE.look s)
+  local working = st ~= nil or sentries_busy == true
+  if not working then next_poll = math.max(next_poll, t + IDLE.look); IDLE.idle_s = IDLE.idle_s + dt end
+  IDLE.on = not working
+  idle_note(t, working, working and (st and ('working: your ' .. st.dog.name .. ' (an enemy within ' .. IDLE.range .. ' m, or a target)')
+      or ('working: your sentries (an enemy within ' .. IDLE.range .. ' m, a target, or a Tesla Tower out)'))
+    or (why == 'not in a mission' and 'idle: not in a mission (menus, the ship or loading)')
+    or ((asleep or sentries_out) and ('idle: no enemy within ' .. IDLE.range .. ' m of your guard dog or sentries'))
+    or 'idle: no guard dog out and no sentries of yours')
   -- the laser: the dog's beam and the sentries' beams, drawn together
   -- (4.6.3) in a pcall of its own: an error in the laser (it is only for show) stops the laser, not the steering
   -- ((5.1.2) nothing is drawn out of a mission: sentries still read as out there (the end of a mission, before their
@@ -379,6 +440,20 @@ do
     end
   end)
   if TESTER and not timed then note('frame timing (test): not available') end
+  -- ((5.1.5 Test 20) code the game's LuaJIT (2.1.0-alpha) can never compile, so it isn't asked to: the frame's entry
+  -- points (they call back into the game), the laser and marker drawing (every line and triangle is a call into the
+  -- game) and the F8 key check. My Test 19 log had the compiler start and give up on these about 20,000 times in a
+  -- 16-minute session - wasted work every time. Turning them off changes nothing else: they ran uncompiled anyway
+  do
+    local j = rawget(_G, 'jit')
+    if type(j) == 'table' and type(j.off) == 'function' then
+      -- ((5.1.5 Test 22) and union (select and pairs: 1,812 give-ups in my Test 19 log) and the Mod Options Menu's
+      -- registration check (551)
+      for _, f in ipairs({ tick, laser_draw_body, laser_ready, check_marker, sentry_after, SGD.time_tick or tick, union, menu_step }) do
+        if type(f) == 'function' then pcall(j.off, f, true) end
+      end
+    end
+  end
   rawset(_G, 'update', function(...)
     local ok2, e
     if SGD.time_tick then ok2, e = SGD.time_tick() else ok2, e = pcall(tick) end
