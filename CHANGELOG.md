@@ -1,5 +1,19 @@
 # Changelog
 
+## 5.2.0
+
+- Lighter on your game: the mod switches itself off when no dog or sentry is out or no enemy is within 150 m, big fights cost far less, and the log no longer causes a hitch when it's written.
+- Ground awareness: sentries learn the ground from where enemies, sentries and you walk, and hold fire when a rise is in their line of fire.
+- Damage check: a sentry or dog firing at an enemy its shots aren't hurting (behind a wall or an obstacle) moves on to one it can hurt; a sentry finishes an enemy it's hurting before switching.
+- A sentry the game leaves stuck on a dead enemy is freed after a moment instead of firing into the ground.
+- Rocket and Autocannon Sentries deal with enemies within 25 m first, then heavy armor; the Autocannon also fires on a heavy that has walked up to one of your sentries.
+- Mortars: markers (no laser) that follow the target, then stay where the salvo will land; they only shell enemies on the ground, never dropship riders, and wait a moment for landed troops. The Gas Mortar Sentry is supported.
+- Autocannon Sentry: laser along its barrel, beam and marker through the whole salvo, marker as soon as it turns to a new enemy.
+- Laser Sentry stays on Heavy Devastators walking up to it.
+- Markers: 25% smaller by default, the same size out to 140 m, lasers no longer above an enemy's head; the pod gun shows the booster icon, the Gas Mortar its own.
+- Every sentry checked against the wiki: the Autocannon's 6 m blast is part of the safety, Rocket and Autocannon leave alone what their shells can't hurt, pod and FRV guns engage out to 30 m.
+- New art.
+
 ## 5.1.4
 
 - Better performance: the targeting markers and the Glow laser are drawn with about half as many triangles (they look the same), and during a mission the log is rewritten at most once a minute instead of every 15 seconds (each rewrite was a short hitch).
